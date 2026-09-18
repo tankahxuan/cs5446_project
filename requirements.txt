@@ -1,0 +1,13 @@
+# Use Python 3.11 for a consistent team environment.
+# CityLearn installs its own simulation and RL dependencies (including NumPy,
+# pandas, PyTorch, and scikit-learn).
+citylearn==3.0.2
+
+# Explore datasets and compare experimental results in notebooks.
+jupyterlab>=4.2,<5
+ipykernel>=6.29,<7
+matplotlib>=3.8,<4
+seaborn>=0.13,<0.14
+
+# Check custom reward calculations and experiment utilities.
+pytest>=8,<9

@@ -1,0 +1,38 @@
+# Local Python environments
+.venv/
+venv/
+env/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter and editor state
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Generated experiment files
+.cache/
+outputs/
+runs/
+checkpoints/
+*.log
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
