@@ -14,6 +14,7 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+.pytest_cache/
 
 # Jupyter and editor state
 .ipynb_checkpoints/

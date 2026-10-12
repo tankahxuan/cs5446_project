@@ -1,9 +1,10 @@
 """Train and evaluate CityLearn's MARLISA controller.
 
-The experiment follows the same schema, seed, reward, SAC hyperparameters,
-training phases, deterministic evaluation, and output layout as the independent
-SAC baseline. MARLISA additionally learns building demand estimators and shares
-coordination variables between building policies.
+The experiment follows the same schema, seed, SAC hyperparameters, training
+phases, deterministic evaluation, and output layout as the independent SAC
+baseline.  Standard MARLISA uses CityLearn's district-coupled ``MARL`` reward
+and additionally learns building demand estimators and shares coordination
+variables between building policies.
 """
 
 from __future__ import annotations
@@ -254,7 +255,7 @@ def run_marlisa(
     output_directory: str | Path = DEFAULT_OUTPUT_DIRECTORY,
     episodes: int = 3,
     random_seed: int = 42,
-    reward: RewardChoice = "independent_sac",
+    reward: RewardChoice = "marl",
     hidden_dimension: tuple[int, int] = (256, 256),
     discount: float = 0.99,
     tau: float = 0.005,
@@ -378,6 +379,11 @@ def run_marlisa(
         "reward_choice": reward,
         "reward_function": type(env.reward_function).__name__,
         "reward_formula": {
+            "marl": (
+                "-sign(net_electricity_consumption_i) * 0.01 * "
+                "net_electricity_consumption_i**2 * "
+                "max(district_net_electricity_consumption, 0)"
+            ),
             "carbon": (
                 "-max(net_electricity_consumption, 0) * carbon_intensity"
             ),
@@ -435,8 +441,9 @@ def run_marlisa(
             "iterations": iterations,
         },
         "comparison_note": (
-            "The default reward and SAC hyperparameters match the independent "
-            "SAC runner; MARLISA adds demand estimation and information sharing."
+            "The SAC hyperparameters match the independent SAC runner. Standard "
+            "MARLISA uses CityLearn's district-coupled MARL reward and adds "
+            "demand estimation and information sharing."
         ),
         "evaluation_note": (
             "The deterministic final episode reuses the same simulation period "
@@ -494,7 +501,7 @@ def parse_args() -> argparse.Namespace:
             "marl",
             "schema",
         ),
-        default="independent_sac",
+        default="marl",
     )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--updates-per-step", type=int, default=1)

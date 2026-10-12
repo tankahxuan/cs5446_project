@@ -118,7 +118,7 @@ Open [`notebooks/03_MARLISA.ipynb`](notebooks/03_MARLISA.ipynb) for the guided e
 python src/run_marlisa.py --episodes 3
 ```
 
-The default MARLISA run uses the same local schema, seed, independent SAC reward, neural-network sizes, SAC hyperparameters, exploration schedule, and deterministic final evaluation as the independent SAC baseline. MARLISA adds learned demand estimators, PCA preprocessing, and information-sharing coordination variables. The runner also corrects a CityLearn 3.0.2 post-exploration policy-indexing issue so each building uses its own trained policy; this correction is recorded in the run metadata. Results are saved under `outputs/marlisa/`, including a controller comparison table when RBC and independent SAC results are available.
+The default MARLISA run uses CityLearn's district-coupled `MARL` reward. It keeps the same local schema, seed, neural-network sizes, SAC hyperparameters, exploration schedule, and deterministic final evaluation as the independent SAC baseline. This treats each controller and its recommended reward as one complete approach; reward totals therefore must not be compared directly across SAC and MARLISA. MARLISA also adds learned demand estimators, PCA preprocessing, and information-sharing coordination variables. The runner corrects a CityLearn 3.0.2 post-exploration policy-indexing issue so each building uses its own trained policy; this correction is recorded in the run metadata. Results are saved under `outputs/marlisa/`, including a controller comparison table when RBC and independent SAC results are available.
 
 ## Carbon-aware MARLISA
 
