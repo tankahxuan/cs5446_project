@@ -1,0 +1,3232 @@
+PDF PAGE 1
+CityLearn v2: Energy-flexible, resilient, occupant-centric, and
+carbon-aware management of grid-interactive communities
+Kingsley Nweyea, Kathryn Kasparb, Giacomo Buscemic, Tiago Fonsecad, Giuseppe Pintoe,
+Dipanjan Ghosea, Satvik Duddukurua, Pavani Pratapaa, Han Lif, Javad Mohammadia, Luis
+Lino Ferreirad, Tianzhen Hongf, Mohamed Oufb, Alfonso Capozzolic and Zoltan Nagya,∗
+aThe University of Texas at Austin, 301 E. Dean Keeton St., ECJ 4.200, Austin, 78712, Texas, USA
+bConcordia University, Montreal, Quebec, Canada
+cPolitecnico di Torino, Torino, Italy
+dINESC-TEC/Polytechnic of Porto - School of Engineering, Porto, Portugal
+ePassiveLogic, Amsterdam-Centrum, Noord-Holland, Nederland
+fLawrence Berkeley National Laboratory, 1 Cyclotron Rd, Berkeley, 94720, California, USA
+ARTICLE INFO
+Keywords:
+distributed energy resources
+occupant-centric control
+reinforcement learning
+grid resilience
+sustainability
+ABSTRACT
+As more distributed energy resources become part of the demand-side infrastructure, it is important
+to quantify the energy flexibility they provide on a community scale, particularly to understand the
+impact of geographic, climatic, and occupant behavioral differences on their effectiveness, as well
+as identify the best control strategies to accelerate their real-world adoption. CityLearn provides an
+environment for benchmarking simple and advanced distributed energy resource control algorithms
+including rule-based, model-predictive, and reinforcement learning control. CityLearn v2 presented
+here extends CityLearn v1 by providing a simulation environment that leverages the End-Use Load
+ProfilesfortheU.S.BuildingStockdatasettocreatevirtualgrid-interactivecommunitiesforresilient,
+multi-agentdistributedenergyresourcesandobjectivecontrolwithdynamicoccupantfeedback.This
+work details the v2 environment design and provides application examples that utilize reinforcement
+learningtomanagebatteryenergystoragesystemcharging/dischargingcycles,vehicle-to-gridcontrol,
+and thermal comfort during heat pump power modulation.
+1. Introduction
+The electricity grid is undergoing system-wide changes
+duetotheadoptionofrenewableenergysources(RESs),and
+electrificationofbuildingsaswellastransportsystems,with
+the goal of reducing the carbon footprint from power gen-
+eration and consumption [79]. However, the intermittency
+of RESs introduces additional challenges of grid instability
+due to the mismatch between electricity generation and
+demand [77] and thus, risks reducing the economic value
+of such sources [29]. At the urban scale, this intermittency
+causes periods of sudden and rapid increase in demand for
+fossil-fueled generation that threaten grid resiliency. The
+’duck curve’ is an example of such a period where depleted
+solar generation resulting from loss of daylight requires a
+steep ramp up in generation by fossil-fueled power plants
+∗Corresponding author
+nweye@utexas.edu (K. Nweye);kathryn.kaspar@mail.concordia.ca
+(K. Kaspar);giacomo.buscemi@polito.it (G. Buscemi);calof@isep.ipp.pt
+(T. Fonseca);giuseppe-pinto@polito.it (G. Pinto);dipanjan02@utexas.edu
+(D. Ghose);satvik.duddukuru@utexas.edu (S. Duddukuru);
+pavani1404@utexas.edu (P. Pratapa);hanli@lbl.gov (H. Li);
+javadm@utexas.edu (J. Mohammadi);llf@isep.ipp.pt(L.L. Ferreira);
+thong@lbl.gov (T. Hong);mohamed.ouf@concordia.ca (M. Ouf);
+alfonso.capozzoli@polito.it (A. Capozzoli);nagy@utexas.edu(Z. Nagy)
+ORCID(s): 0000-0003-1239-5540(K. Nweye);0000-0002-9781-534X (K.
+Kaspar); 0000-0002-5592-3107(T. Fonseca);0000-0002-2967-0812 (D.
+Ghose); 0000-0002-5976-8853 (L.L. Ferreira);0000-0003-1886-9137 (T.
+Hong); 0000-0002-0083-4983 (A. Capozzoli);0000-0002-6014-3228 (Z.
+Nagy)
+to meet demand and is exacerbated by high photovoltaic
+(PV) penetration [11]. In extreme cases where power plants
+are unable to ramp up at the rate needed to meet demand,
+rotating blackouts are imposed to prevent grid imbalance.
+Distributed energy resources (DERs) in buildings, in-
+cluding RESs, energy storage systems (ESSs), and heat
+pumps, can provide the grid with energy flexibility in re-
+sponse to supply deficit, grid signals, changing weather
+conditions, or occupant preferences [38]. Electric vehicles
+(EVs) also have the capability to provide energy flexibility
+through grid-to-vehicle (G2V) and vehicle-to-grid (V2G)
+schemes.Temporaryloadsheddingduringon-peakperiods,
+load shifting to off-peak periods, load modulation, and dis-
+patchofgeneratedrenewablepowerforon-siteconsumption
+or grid export are several ways in which buildings can use
+theseDERstoactivatetheirflexibilityandreshapetheirload
+profile to form a community of grid-interactive buildings
+[55].
+As more DERs become part of the demand-side infras-
+tructure, it is important to quantify the energy flexibility
+they provide on the urban scale as well as identify best
+control strategies to accelerate the design and adoption of
+demand response (DR) programs. Particularly, understand-
+ingtheimpactofgeographic,climatic,andoccupantbehav-
+ioral differences on the effectiveness of DERs in providing
+flexibility could shape future building design choices and
+provide a reference for policymakers. However, to carry
+out such urban scale analysis, an inventory of the current
+buildingstockiscrucial.TheEnd-UseLoadProfiles(EULP)
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 1 of 24
+arXiv:2405.03848v1  [cs.LG]  2 May 2024
+
+PDF PAGE 2
+CityLearn v2
+for the United States (U.S.) Building Stock dataset [87],
+generated with ResStock [86] and Comstock [35] engines,
+uses physics-based energy models to provide over 900,000
+syntheticbuildingmodelsthatarecalibratedwithreal-world
+data and represent the residential and commercial building
+stockintheU.S.Thebuildingsdifferinend-usefuelsource,
+occupantbehaviorthataffectenergyprofiles,archetype,con-
+struction material, climatic region and other distinguishable
+buildingcharacteristics.Withtheavailabilityofsuchalarge
+and diverse energy model repository, residential, commer-
+cial, and mixed-use grid-interactive communities to study
+the impact of DERs and DR programs are made possible.
+It is, however, challenging to coordinate multiple DERs
+in a single building or multiple buildings while ensuring
+efficient and flexible operation that does not increase the
+riskofoccupantdiscomfort.TheseDERscouldalsocausea
+deviationfromthebusiness-as-usual(BAU)loadprofileand
+could introduce new peaks [44, 61]. Also, EV loads, if not
+properly managed, have the potential to destabilize the grid
+with up to 20% increase in peak electricity demand [5] and
+35% increase in electricity consumption [26].
+Aside the risk of power outages caused by supply-
+demand mismatch, wildfires [90] and extreme weather such
+as heat waves [23], and winter storms [10] also exacerbate
+the likelihood of power outages leading to unserved energy
+and occupant discomfort. Thus, a control solution for DERs
+must be resilient during periods of curtailed supply or ex-
+tremecasesofblackoutstomitigatethedisastervulnerability
+of occupants.
+Furthermore, the stochasticity of occupant behavior
+may result in different energy profiles, thus indicates the
+influence that appliance usage, thermostat setpoints, and
+other occupant-driven end-uses have on energy consump-
+tion [1]. However, typical thermal comfort models such as
+Fanger’s Predicted Mean Vote-Predicted Percentage Dissat-
+isfied model [22] do not capture occupant preferences and
+behaviours that are observed in residential buildings. Smart
+thermostat data, such as ecobee’s Donate Your Data dataset
+[50] can be leveraged to develop more realistic represen-
+tations of both thermostat setpoint profiles and thermostat
+override behavior by occupants in the residential setting.
+In this way, thermostat setpoints can be automatically con-
+trolled for the implementation of DR, while occupants can
+choose to override the DR changes due to discomfort, thus
+balancing both energy efficiency and thermal comfort.
+Comparedtosimplerrule-basedcontrol(RBC)[49],ad-
+vanced control algorithms such as model predictive control
+(MPC) [18] and reinforcement learning control (RLC) [53]
+couldprovidesolutionstothesecontrolchallengesbyadapt-
+ing their control policy to unique building characteristics,
+occupantbehaviors,andpricingordemandresponsesignals
+from the power grid, while cooperating towards improving
+multi-objective key performance indicators (KPIs). When
+improved, these KPI such as minimizing the peak load in
+abuildingdistrictandmaintainingbuilding-specificcomfort
+needs,ensureenergyefficiencyandhighindoorenvironmen-
+tal quality (IEQ) in buildings.
+A research gap in the adoption of advanced control for
+district or community-scale DER control and DR is the
+ability to benchmark algorithm performance in buildings
+[85]. Physics-based models accurately capture the thermal
+dynamics in buildings and are the industry standard for
+assessing the impact of control in the built environment.
+However, they require extensive domain knowledge, input
+dataandattentiontodetailtomodelbuildingenergysystems
+(BESs)aswellassignificantefforttointegratestandardized
+third-partycontrollibrariesforco-simulationandcontrolal-
+gorithm benchmarking. Building emulators provide various
+levels of abstractions of BESs, which enables the designer
+to focus on the control implementation. Such emulators
+include Energym [76] and BOPTEST [8], which provide
+high-fidelityBESmodels.Althoughtheseemulatorstakead-
+vantage of robust simulation engines including EnergyPlus
+and Modelica-based Building Library, their dependency on
+such engines raises the entry level for users. Moreover, they
+are designed for specific BES or building environments, do
+notconsiderthegrowinginfluenceofEVsonbuildingloads,
+do not model grid-resiliency nor occupant behavior, and
+do not allow for district-level control nor KPI evaluation.
+The DOPTEST framework [3] that builds upon BOPTEST
+to support district-level and multi-agent control requires
+compute-intensive co-simulation and is limited to building
+and district environments provided within the framework.
+OCHRE [7] is a Python-based emulator for both single
+and multi building control that makes use of a detailed RC
+thermal dynamics model with user-configurable envelope
+parameters and BESs. Its BES models are defined similarly
+to EnergyPlus BESs thus, provides a blend of high fidelity
+modeling and custom buildings without the need for co-
+simulation with EnergyPlus. However, its interface does
+not follow any standardized environment protocol such as
+Gymanasium[78]neitherisitdirectlycompatiblewithstan-
+dardized control libraries e.g. Stable-Baselines3 [72] and
+RLlib [47] for use in control algorithm benchmarking.
+CityLearn is an open-source Gymnasium environment
+for the easy implementation and benchmarking of RBC,
+RLC and MPC algorithms for DERs in a DR setting.
+CityLearn is used to reshape the aggregated electricity
+load profile by controlling DERs in a district of diverse
+buildings, and allows for multi-agent control and district-
+levelKPIsevaluation.Introducedin[83],ithasbeenapplied
+extensively for DER control benchmarking in scenarios of
+DR [41, 16, 15, 28, 70, 71, 69], voltage regulation [67]
+as well as control policy meta-learning [92], and transfer
+learning [61].
+The CityLearn v2 release that we present here provides
+a framework that incorporates thermal dynamics modeling
+in [68] that allows for heat pump capacity/power control to
+provide partial load satisfaction, precooling and preheating
+services in buildings. Additionally, this new release inte-
+grates an EV module to provide G2V and V2G control, as
+well as occupant modeling for thermostat setpoint override
+to simulate realistic occupant-centric control (OCC) and
+thermal comfort assessment. CityLearn v2 also provides
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 2 of 24
+
+PDF PAGE 3
+CityLearn v2
+an integration with the EULP for the U.S. Building Stock
+datasetbasedontheworkbyNweyeetal.[56]aswellasthe
+functionality to assess the resiliency of control algorithms
+during power outage events through a stochastic power out-
+age model based on distribution system reliability metrics
+[36] such that it is generalizable by providing custom or
+location-specific metrics. For compatibility with standard
+control interfaces, the v2 environment follows the latest
+Gymansium control protocol and provides wrappers for in-
+terfacingwithStable-Baselines3andRLlibsingleandmulti-
+agent algorithms. Thus, we summarize the contributions of
+our work as providing:
+1. asimulationenvironmentthatleveragesrealisticbuilding-
+stock datasets for resilient multi-agent, DER and
+objective control with dynamic occupant feedback in
+grid-interactive communities;
+2. an all-in-one environment without the need for co-
+simulation that is designed according to the standard-
+ized Gymnasium interface; and
+3. extensibleinterfaceforstandardizedcontrolalgorithm
+libraries.
+The remainder of our paper is organized as follows:
+Section2explainstheenvironmentanditsinternalmodelsin
+detail, while Section 3 describes the environment’s control
+interface and configurations. We provide example applica-
+tions of the CityLearn v2 environment in Section 4 and
+discuss the implications of the new environment in building
+controls research as well as its limitations in Section 5.
+Finally, we conclude in Section 6. An Appendix section
+provides supporting environment documentation.
+2. Environment
+CityLearn1 modelsadistrictofbuildingswithsimilaror
+differentloads,electricdevices,ESSsandelectricitysources
+thatsatisfytheloadsasshowninFigure1.Thereisnoupper
+limit on the number of buildings in a district and a district
+can have as few as one building. The electric devices and
+ESSs are one of many DERs described in Appendix A.1.
+We further describe how these DERs are used in a building
+to satisfy loads, store energy, or provide electricity supply
+inSection2.1.ThepoweroutagemodelisdescribedinSec-
+tion 2.2, while Sections 2.3 and 2.4 define the in-built KPIs
+and datasets for control benchmarking. We end this section
+in Section 2.5 by describing a framework that leverages the
+EULPdatasettocreatevirtualgrid-interactivecommunities
+for CityLearn.
+2.1. Building model
+The building model is illustrated in Figure 1 where we
+show the transfer of actions from the control agent and
+its reception of measurable observations that describe the
+building’sstates.Thisbuilding-controlinterfaceisexplained
+in Section 3.
+1ANONYMOUS
+A building is a combination of electricity sources that
+power controllable DERs, including electric devices and
+ESSs used to satisfy thermal and electrical loads as well
+as provide the grid with energy flexibility (Sections 2.1.1
+to 2.1.4). The building is modeled as a single thermal zone
+where space thermal loads affect its indoor dry-bulb tem-
+perature. We use a data-driven thermal dynamics model
+to quantify the effect of the thermal load on temperature
+(Section 2.1.5) and an occupant model that has the ability
+to override the temperature setpoint is described in Sec-
+tion 2.1.6.
+2.1.1. Loads
+There are five loads in a building including space cool-
+ing,spaceheating,domestichotwater(DHW)heating,elec-
+tricequipment,andEVloads.Thespacecoolingandheating
+loads refer to the energy needed to maintain the indoor
+dry-bulb temperature at its setpoint. We make no distinc-
+tion between cooling and heating setpoints and CityLearn
+does not allow for simultaneous space cooling and heating
+in the same time step for a building. The DHW heat-
+ing load is the total heating energy needed to satisfy hot
+water end-uses such as shower, bathroom, and kitchen
+sinks, and other water end uses requiring water heating
+that are not space heating-related. Electric equipment re-
+fer to non-shiftable plug loads such as lighting, enter-
+tainment and kitchen appliances. The EV load is the en-
+ergy required to charge an EV to a scheduled departure
+state-of-charge (SoC). Within CityLearn, the space cooling,
+space heating, DHW heating, electric equipment, and EV
+loads are calledcooling_demand, heating_demand, dhw_demand,
+non_shiftable_load, andev_demand.
+Not all loads need to exist in a building e.g., a building
+situatedinaheatingdominantclimatemaynothavecooling
+loads year-round. Also, anyone or all of these loads are
+either known a priori from building energy performance
+simulation (BEPS) [82] or real-world measurement [61]. In
+these instances, the ideal load must be satisfied. Alterna-
+tively, they are controlled loads and are inferred at runtime
+e.g., heat pump power control driving space cooling or
+heating loads. To satisfy these loads in either the ideal or
+control-action case, we make use of heating ventilation and
+air conditioning (HVAC) systems directly (Section 2.1.2),
+or ESSs (Section 2.1.3) through load shifting, where these
+systems are powered by the electricity sources described in
+Section 2.1.4.
+2.1.2. Electric devices
+The cooling_device, heating_device, anddhw_device are
+HVAC electric device objects in CityLearn that are used to
+satisfy the space cooling, space heating and DHW heating
+loads respectively. Thecooling_deviceis a heat pump while
+the heating_device and dhw_device are either heat pump or
+electric heater type. The CityLearn version at the time of
+writingallowsfor cooling_deviceand heating_devicecontrol
+subsequently, drivingcooling_demandand heating_demand.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 3 of 24
+
+PDF PAGE 4
+CityLearn v2
+Figure 1: CityLearn building model including electricity sources that power controllable DERs including electric devices and ESSs,
+used to satisfy thermal and electrical loads as well as provide the grid with energy flexibility. A distinction is made between
+environment and control aspects of a building to show the transfer of actions from the control agent and reception of measurable
+observations by the control agent that quantifies the building’s states.
+These HVAC systems are powered directly by one or
+more of the electricity sources in Section 2.1.4 and if avail-
+able, may be used to charge thermal energy storage (TES)
+systems in the building.
+The electric_vehicle_chargerisusedtosatisfyEVload
+oractsanintermediatelinkbetweentheEVandgridforV2G
+applications.
+2.1.3. Energy storage systems
+There are up to five optional and controlled ESSs in a
+buildingincluding cooling_storage, heating_storage, dhw_storage,
+electrical_storage, andelectric_vehicle ESS objects. The
+cooling_storage, heating_storage, anddhw_storage are TES
+DER type and provide space cooling, space heating and
+DHWheatingloadshiftingflexibilityrespectively.Theyare
+charged by the HVAC device used to meet the thermal load
+which they service e.g. is thecooling_device charging the
+cooling_storage. However, the building’s thermal load is
+firstsatisfiedandwhatisleftoftheHVACdevice’snominal
+power is used to charge the TES. When discharging, the
+energy from the TES is first used to meet the building’s
+thermal load before the HVAC device.
+The electrical_storage is a battery energy storage sys-
+tem (BESS) DER type that powers any of the aforemen-
+tionedelectricdeviceswhenindischargemodeorispowered
+by one or more of the electricity sources in Section 2.1.4. If
+the electrical_storagedischarges more energy than needed
+to meet the building loads, the excess is sent to the grid as
+part of the building’s net export.
+The electric_vehicle is an EV DER type and performs
+similarfunctionasthe electrical_storage,however,theEV
+isavailableonascheduledefinedbyitsarrivalanddeparture
+times. The EV can be used in three modes: G2V, V2G, and
+no control (i.e., where the EV acts as a load without any
+possible control over its charging) [24].
+2.1.4. Electricity sources
+The electric devices are primarily powered by the elec-
+tric grid. CityLearn at the time of writing, does not have
+a grid model so the power a building is able to draw from
+the grid at a given time step is unconstrained, except in the
+case of a power outage (Section 2.2). Optionally, a building
+may have a PV system (pv) that provides self-generation
+as a first source of electricity before the grid. Optional
+electrical_storageand electric_vehiclearechargedbythe
+grid and pv but also augment thepv and grid when in dis-
+charge mode to supply the building with electricity. Excess
+self-generation, electrical_storage and electric_vehicle
+discharge are sent to the grid as apart of the building’s net
+export.
+𝐸building, net
+𝑡 = 𝐸cooling_device
+𝑡 + 𝐸heating_device
+𝑡
++ 𝐸dhw_device
+𝑡 + 𝐸non_shiftable_load
+𝑡 + 𝐸electrical_storage
+𝑡 +
+𝐸electric_vehicle_charger
+𝑡 + 𝐸pv
+𝑡 (1)
+Given the aforementioned electric devices, ESSs and
+electricity sources, the net electricity consumption of the
+building (Equation (1)) is thus, the sum of the positive elec-
+tricity consumption by thecooling_device (𝐸cooling_device
+𝑡 ),
+heating_device(𝐸heating_device
+𝑡 ), dhw_device(𝐸dhw_device
+𝑡 ),and
+non_shiftable_load (𝐸non_shiftable_load
+𝑡 ), mixed polarity elec-
+tricityconsumptionofthe electrical_storage(𝐸electrical_storage
+𝑡 ),
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 4 of 24
+
+PDF PAGE 5
+CityLearn v2
+and electric\_vehicle\_charger (𝐸electric_vehicle_charger
+𝑡 ), and
+negative polarity electricity generation by the pv (𝐸pv
+𝑡 ).
+𝐸cooling_device
+𝑡 , 𝐸heating_device
+𝑡 , and 𝐸dhw_device
+𝑡 are the elec-
+tricitytobeusedtosatisfythe cooling_demand, heating_demand,
+and dhw_demand after accounting for energy discharge from
+the cooling_storage, heating_storage,and dhw_storage.There-
+fore, a case where there the control action for these three
+TESs is adequate to fully satisfy the loads,𝐸cooling_device
+𝑡 ,
+𝐸heating_device
+𝑡 , and𝐸dhw_device
+𝑡 will equal zero.
+The district-level net electricity consumption is the sum
+of 𝐸building, net
+𝑡 for all buildings as defined in Equation (2).
+𝐸district, net
+𝑡 =
+𝑏−1∑
+𝑖
+𝐸building 𝑖,net
+𝑡 (2)
+2.1.5. Thermal dynamics model
+The building’s thermal dynamics is modeled as a long
+short-termmemory(LSTM)networkthatpredictstheindoor
+dry-bulb temperature,𝑇in
+𝑡 , given a lookback,𝑙, of previous
+observations in the building [68]. The model function is
+defined in Equation (3) where its independent variables
+include indoor dry-bulb temperature (𝑇in), outdoor dry-
+bulb temperature (𝑇out), cooling or heating load depending
+on hvac_mode defined in Appendix A.3 (𝑄cooling | heating), di-
+rect solar irradiance (𝑄solar, direct), diffuse solar irradiance
+(𝑄solar, diffuse), occupant count (𝑈), month (𝑚), day-of-week
+(𝑑), and hour (ℎ). While the𝑇in input to the model is the
+previous 𝑙 time steps, other input are their observations
+betweenthecurrenttimestep, 𝑡,andprevious 𝑙−1timesteps.
+Appendix A.2 explains the methodology for generating the
+model fitting data and describes how these data are used in
+training and testing the LSTM network.
+𝑇in
+𝑡 = 𝑓
+(
+𝑇in
+𝑡−1…𝑡−𝑙,
+(
+𝑇out, 𝑄cooling | heating,
+𝑄solar, direct, 𝑄solar, diffuse, 𝑈 , 𝑚, 𝑑, ℎ
+)
+𝑡…𝑡−(𝑙−1)
+)
+(3)
+2.1.6. Occupant-thermostat override model
+Local or regional thermostat data including indoor air
+temperature, date/time, HVAC system state (e.g. heat, cool)
+and thermostat events (e.g. override occurrence) can be
+usedtodevelopoccupant-thermostatoverridemodels.Smart
+thermostats are programmable and allow for the user to
+set various program settings during specified hours and
+duration, such as ‘Home’, ‘Away’, and ‘Sleep’. When a user
+decides to change from the set program, an override occurs,
+andgenerallythisbehaviorcanbeinterpretedasdiscomfort-
+driven.However,notalloccupantshavethesamethermostat
+setpoint preferences and subsequent override behavior. As
+such, to develop the occupant-thermostat override models,
+wefirstly (a)clusterthethermostat setpointprofilestoiden-
+tify distinct thermostat setpoint preferences in the region;
+(b) develop a model to predict the probability of a setpoint
+override for each occupant type; (c) estimate the magnitude
+of the thermostat setpoint override.
+Firstly, we develop models for three periods (summer,
+winter, shoulders) separately, as HVAC system state and
+occupantoverridebehavioraredifferentduringeachperiod.
+Next,wequerythesetpointdataforoneperiod(e.g.winter)
+and extract discomfort-driven behavior from the dataset. In
+the case study presented in [48], seven out of 20 occupants
+showed no correlation between the occurrence of a setpoint
+increase and any environmental variable, e.g. indoor or
+outdoor air temperature, thus showing the difficulties in
+interpreting and using thermostat data. In a winter heating
+scenario, we expect an inverse relationship between the
+indoor air temperature and a setpoint override (the data
+was organized such that ‘0’ represented no override and ‘1’
+represented an override). We thus firstly used Pearson Cor-
+relationtoextractallhomes/occupantdatawithacorrelation
+less than -0.20 (some correlation) between the indoor air
+temperatureandanincreasetothetemperaturesetpoint,thus
+focusing the modeling on this subset of the data.
+Usingtheremainingdata,wethenusedk-meanscorrela-
+tiontoidentifyclustersbasedontheaverageindoorairtem-
+perature during a setpoint override, separating the overrides
+by whether they increased or decreased the setpoint. The
+Silhouette score [75] was used to determine the number of
+clusters,andwevisualizedtheaveragedailysetpointprofile
+aswellasahistogramoftheindoorairtempteraturetoensure
+unique clustering. It would also be possible to do k-shape
+clustering on the average daily setpoint profiles as well to
+create the unique clusters, as was done in [64].
+We next model the probability of a setpoint override for
+each occupant type, again separating setpoint increase and
+setpoint decrease behavior for the overrides. If occupancy
+informationisavailable,extractonlythetimestepsinwhich
+the home is occupied for this modeling; otherwise, assume
+an acceptable occupancy rate for the dataset. We then repli-
+cate the methodology used in [48, 30] and use discrete-time
+Markovlogisticregressionmodelstopredicttheprobability
+of a thermostat setpoint override, an industry standard as
+referenced in [17]. Equation 4 shows the form of the lo-
+gistic regression equation, with the indoor air temperature,
+𝑇𝑖𝑛, representing the input variable andp representing the
+probability of a setpoint increase or decrease (override = 1,
+in either case, but the scenarios are evaluated separately).
+Coefficients a and b are determined in the training, and the
+fit of the curve is evaluated using the p-value.
+𝑝(𝑜𝑣𝑒𝑟𝑟𝑖𝑑𝑒 = 1) = 1
+1 + 𝑒−(𝑎+𝑏𝑇in) (4)
+Once the probability of an override is modeled, the next
+step is determining by how much the setpoint is changed in
+the event that an override occurs. Depending on the data
+available, it is possible to randomly sample from the dis-
+tribution of the setpoint overrides to estimate the change in
+setpoint during the override. We further developed random
+forestmodelstoclassifythechangetothesetpointduringan
+override as either small (less than0.5 ◦C) or large (greater
+than 0.5 ◦C).
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 5 of 24
+
+PDF PAGE 6
+CityLearn v2
+2.2. Power outage model
+A power outage is defined as a time series,𝑂, of binary
+signals where 𝑂𝑡 = 0 indicates no outage at time step,𝑡,
+and 𝑂𝑡 = 1 indicates an outage. A sequence of consecutive
+values of 𝑂𝑡 = 1 is regarded as a power outage event
+and overlapping events are merged into one event. These
+signalsareeitherarbitrarilydefinedorgeneratedusingsome
+stochastic model.
+We provide a stochastic power outage model based on
+distribution system reliability metrics [36] including the
+number of non-momentary electric interruptions, per year,
+an average customer experiences (System Average Inter-
+ruption Frequency Index (SAIFI)), and the average number
+of minutes it takes to restore non-momentary electric in-
+terruptions (Customer Average Interruption Duration Index
+(CAIDI)).Thesemetricsarereportedannuallyandlocation-
+specific [80] allowing for model adaptation to real-world
+locations and scenarios. A given day of the year having an
+outage event or not is determined by randomly sampling
+from the Bernoulli distribution in Equation (5), where the
+probability of an event,𝑝, is the ratio of SAIFI to number
+of days in a non-leap year (365). The start of an event
+is randomly sampled from a uniform distribution, where
+Equation(6)isanexampleofsuchdistributionforanhourly
+time step. Finally, the duration of each power outage event
+is sampled from an exponential distribution with rate,𝜆, set
+to CAIDI (Equation (7)). Sampling from these distributions
+for a fixed SAIFI and CAIDI is controlled by the model’s
+random seed.
+Outage event∼ Bernoulli
+(
+𝑝 = SAIFI
+365
+)
+(5)
+Outage start hour∼ 𝑈 (0, 23) (6)
+Outage duration (minutes)∼ 𝐸𝑥𝑝(𝜆 = CAIDI) (7)
+𝐸available
+𝑡 =
+⎧
+⎪
+⎪
+⎪
+⎪
+⎨
+⎪
+⎪
+⎪
+⎪⎩
+𝐸pv
+𝑡
+−
+(
+𝐸cooling_device
+𝑡 + 𝐸heating_device
+𝑡
++𝐸dhw_device
+𝑡 + 𝐸non_shiftable_load
+𝑡
++𝐸electrical_storage
+𝑡
++𝐸electric_vehicle_charger
+𝑡
+)
+if 𝑂𝑡 > 0
+∞ otherwise
+(8)
+Equation(8)definestheavailableelectricitysupplydur-
+ing a power outage event and normal grid operation. In
+an outage event, the grid is unable to provide buildings
+with electricity and buildings can only make use of the
+flexibilityprovidedbyESSsandPVsystemaftersubtracting
+electricity use by (1) the cooling_device, heating_device,
+and dhw_device to meet thermal loads and charge TESs,
+(2) non_shiftable_load, as well as (3) electrical_storage
+and electric_vehicle_chargerifinchargingmode.Whereas,
+during normal operation, there is unlimited supply from the
+grid.
+2.3. Key performance indicators
+Table A.5 summarizes the KPIs within CityLearn that
+are used for thermal-comfort, energy cost, environmental,
+energy,andresilienceevaluation.TheseKPIsarecalculated
+at either the building or district level by default and KPIs
+defined at the building level are evaluated at the district
+levelbycalculatingthebuilding-levelaverage.TheKPIsare
+defined such that the control objective is to minimize their
+value.
+2.4. Datasets
+Table A.6 is a summary of the in-built datasets in
+CityLearn that were designed for a distribution of control
+problems including those specific to The CityLearn Chal-
+lenge[84,54,60].Eachdatasetisauniqueenvironmentcon-
+figuration where environments differ by their location and
+climate zone that influence their weather file and building
+characteristics,timeseriesdaterange,buildingcount,model
+availability (thermal, occupant and power outage models)
+that affect the complexity of the control problem, control
+signal availability including electricity pricing and carbon
+emissionstimeseries,buildingloads,controllableESSs,and
+PV system availability for self-generation.
+2.5. Environment design workflow
+Figure 2 depicts a framework for designing virtual grid-
+interactive communities in CityLearn by leveraging the
+EULPdatasetaswellasotherdatasources[56].Thisframe-
+workis splitinto threephases:(1) neighborhooddesign and
+data collection, (2) load simulation and dataset preparation
+and (3) control simulation and reporting.
+In the neighborhood design and data collection phase,
+the neighborhood designer pre-filters the EULP dataset for
+buildings whose metadata match certain criteria such as
+archetype,vintage,location,andHVACequipmenttypeand
+the designer may choose to define the building count in the
+neighborhood.Randomselectionordata-drivenmethodsare
+used to select buildings up to the specified count. A data-
+drivenapproachisprovidedin[56]thatmakesuseofcluster-
+frequency-basedsamplingfrombuildingsclusteredbymeta-
+data similarities including orientation, decade of construc-
+tion,numberofoccupants,infiltrationrate,ceiling,slaband
+wall insulation, energy use intensity (EUI) and window-to-
+wall ratio (WWR). The building metadata, occupancy and
+load schedules, weather data and energy models for the
+selected buildings are then stored in a central database for
+easy retrieval and manipulation. Optionally, the variance in
+building loads and indoor environmental conditions across
+buildings is improved by replacing the default thermostat
+setpointscheduleswithreal-worldthermostatsetpointsfrom
+the ecobee Donate Your Data dataset [50].
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 6 of 24
+
+PDF PAGE 7
+CityLearn v2
+OpenStudiomodel (.osm)
+Building metadata (.parquet)
+Building schedules(.csv)
+Representative building selection
+Weather dataset
+EnergyPlussimulations
+LoadsSupplementarymodels
+CityLearn
+KPIs
+Systemsspecifications
+Representativethermostat setpoints
+Controlagent(s)
+EULP datasetPhase 1Neighborhooddesign anddata collection
+Phase 2Load simulationanddatasetpreparation
+Phase 3Controlsimulationand reporting
+Designer option 1•Building metadata•Building count
+Designer option 2•DER availability•System sizing
+Designer option 4•Control Algorithm
+Designer option 5•KPI selection
+Designer option 3•Thermal dynamics•Occupant•Power outage
+Figure 2: Framework for designing virtual grid-interactive communities in CityLearn from the End-Use Load Profiles for the United
+States Building Stock dataset (adapted from [56]).
+In the building load simulation and dataset preparation
+phase, the collected data are used to run BEPS simulations
+following the methodology for thermal dynamics model-
+ing in Section 2.1.5. The LSTM thermal dynamics model
+is interchangeable with other thermal dynamics modeling
+methodology e.g. resistance-capacitance (RC) modeling. In
+addition to the data needed to train the thermal dynamics
+model other ideal loads data including DHW heating loads
+and plug loads are retrieved from the BEPS. The choice of
+occupant and power outage models are also decided in this
+secondphase.Finallyinthesecondphase,designerinputfor
+DER availability as well as their technical specifications are
+defined.
+The simulated loads, models and system specifications
+from the second phase are utilized to create a virtual repre-
+sentation of the intended neighborhood in the control sim-
+ulation and reporting phase. The designer selects a control
+algorithm to manage the DERs. Post-simulation evaluation
+of control performance is achieved by the user-selected
+KPIs.
+3. Control
+Control in CityLearn is defined by its interface and
+configuration as shown in Figure 3. The CityLearn envi-
+ronment makes use of the Farama Foundation Gymnasium
+interface[78],builtupontheOpenAIGyminterface[9],for
+standardized RLC environment design. Figure 3a illustrates
+this interface where there is an observation-action-reward
+exchange loop between the environment and control agent
+astheenvironmenttransitionsfromonetimesteptoanother.
+In the current time step,𝑡, the control agent receives the
+environment’s observations,𝑜𝑡 and prescribes actions 𝑎𝑡.
+The actions are applied to the environment to affect the
+observations at the next time step,𝑜𝑡+1. 𝑜𝑡+1 and a reward,
+𝑟𝑡+1 (from reward function,𝑅) that quantifies the quality of
+𝑎𝑡 in optimizing the outcome of a control objective or KPI
+arereturnedtothecontrolagenttoteachittolearnacontrol
+policy, 𝜋. 𝜋 maps actions to observations that maximize the
+cumulative reward over an episode i.e., the terminal state
+of the environment, after initialization (𝑡 = 0 ), beyond
+which there are new observations. Appendices A.3 and A.4
+describe the observation and action spaces in CityLearn
+while Appendix A.5 outlines the internally defined reward
+functions in the environment.
+Figure 3b shows three possible control configurations
+inCityLearnnamely;single-agent,independentmulti-agent,
+and coordinated multi-agent. In the single-agent configura-
+tion,thereisaone-to-manyrelationshipbetweenthecontrol
+agent and buildings where a centralized agent collects ob-
+servationsandprescribesactionsforallDERsinthedistrict
+and, receives a single reward value each time step to learn
+a generalized control policy. This is akin to an energy ag-
+gregator controlling flexible resources in a distributed man-
+ner. The independent multi-agent configuration has a one-
+to-one agent-building relationship thus, there are as many
+rewards as buildings each time step and a unique control
+policy is learned for each building. The coordinated multi-
+agentconfigurationissimilartotheindependentmulti-agent
+configuration except that agents can share information to
+achievecooperativeobjectivese.g.districtpeakreductionor
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 7 of 24
+
+PDF PAGE 8
+CityLearn v2
+ENVIRONMENT
+CONTROL
+!!+#	 ,#!+#	
+!!	$!	
+ENVIRONMENT
+(a)FaramaFoundationGymnasiuminter-
+face.
+Building b-1
+Building 0
+Building b-1
+Building 0
+Building b-1
+Building 0
+!!"…$%&,#!…!'&"…$%&,$!'&"…$%&
+(b)Single-agent(left),independentmulti-agent(middle),andcoordinatedmulti-agent(right)
+control configurations.
+Figure 3: Control summary in CityLearn.
+ENVIRONMENT
+RBC
+!!	"!	
+ENVIRONMENT
+1.Select control actions based on simple rules(IF-THEN-ELSE)
+ENVIRONMENT
+MPC
+!!#$	,$!#$	
+!!	"!	
+ENVIRONMENT
+1.Get forecast.2.Optimize control actionusingbuildingthermal model.
+ENVIRONMENT
+RLC
+!!#$	,$!#$	
+!!	"!	
+ENVIRONMENT
+1.Update knowledge based on reward.2.Select action for highest expected reward.
+Figure 4: Integration of rule-based control (RBC), model predictive control (MPC), and reinforcement learning control (RLC)
+with CityLearn.
+competitive objectives e.g. price bidding in the energy flex-
+ibility market. Appendix A.6 discusses some of the in-built
+control agent algorithms in CityLearn that use one or more
+oftheseconfigurationsaswellasCityLearn’sprovisionsfor
+interfacing with third-party standardized control algorithm
+libraries.
+We emphasize that CityLearn is not limited to RLC
+algorithmsalonedespiteitsGymnasiuminterfaceasitworks
+with other simple control theory algorithms e.g., RBC [57]
+aswellasadvancedcontroltheoryalgorithmse.g.,MPC[91]
+asshowninFigure4.InRBC,therewardisnotutilizedwhile
+in MPC, the reward is akin to the control objective. Also,
+RBC policy is static and does not consider the observations
+in the following time step to update its rules.
+4. Examples
+ThissectionprovidesexampleapplicationsoftheCityLearn
+v2 environment. Section 4.1 showcases 17 different control
+tasks of differing complexity, Section 4.2 applies the EULP
+dataset to create three representative neighborhoods for
+ESS control, Section 4.3 provides a commercial building
+district V2G application for a European EV dataset, and
+Section4.4demonstratestheuseoftheoccupantthermostat
+setpoint override model in conjunction with heat pump
+power modulation.
+4.1. Control task distribution in CityLearn v2
+The work in [59] showcases 17 different control tasks
+(Table1)ofdifferingcomplexitythataresolvedinCityLearn
+v2usingasubsetofTheCityLearnChallenge2023datasets.
+Complexity refers to (1) the number of controllable DERs
+present in a building including DHW TES (dhw_storage),
+BESS (electrical_storage) when paired with a PV system
+and heat pump (cooling_device), (2) the simplicity of the
+control algorithm i.e., explainable RBC or adaptive but
+black-box RLC, (3) the control objective (reward function
+for RLC) designed for reduction in electricity consumption,
+energy cost, greenhouse gas (GHG) emission, discomfort,
+peakdemand,oracombinationoftheaforementionedobjec-
+tives,and(4)thesizeofthedistricti.e.,numberofbuildings.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 8 of 24
+
+PDF PAGE 9
+CityLearn v2
+Table 1
+Summary of CityLearn v2 control tasks in [59] describing the number of buildings in controlled district, KPI to minimize, control
+agent and controlled DERs.
+ID Buildings KPI Control DHW TES BESS PV Heat pump
+x-b1_b2-x-x 2 - Baseline
+x-b1_b2-x-pv 2 - Baseline ✓
+rbc-b1-c-dhw 1 Cost RBC ✓
+rbc-b1-e-dhw 1 Emissions RBC ✓
+rbc-b1-c-bess_pv 1 Cost RBC ✓ ✓
+rbc-b1-e-bess_pv 1 Emissions RBC ✓ ✓
+rbc-b1-c-dhw_bess_pv 1 Cost RBC ✓ ✓ ✓
+rbc-b1-e-dhw_bess_pv 1 Emissions RBC ✓ ✓ ✓
+rbc-b1_b2-p-bess_pv 2 Peak RBC ✓ ✓
+rlc-b1-c-dhw 1 Cost SAC ✓
+rlc-b1-e-dhw 1 Emissions SAC ✓
+rlc-b1-c-bess_pv 1 Cost SAC ✓ ✓
+rlc-b1-e-bess_pv 1 Emissions SAC ✓ ✓
+rlc-b1-c-dhw_bess_pv 1 Cost SAC ✓ ✓ ✓
+rlc-b1-e-dhw_bess_pv 1 Emissions SAC ✓ ✓ ✓
+rlc-b1-d_o-hp 1 Discomfort & electricity
+consumption
+SAC ✓
+rlc-b1_b2-p-bess_pv 2 Peak SAC ✓ ✓
+4.1.1. Cost or emission reduction
+Figure 5 shows cost ($) and emissions (kgCO2e) in a
+buildingfromRBCorRLCofDHWTES,BESS-PVsystem
+orbothwhenthecontrolobjectiveisenergycost(Figure5a)
+oremission(Figure5b)reduction.Theresultsarecompared
+to baseline configurations without PV (x-b1_b2-x-x) and
+with PV (x-b1_b2-x-pv) in a 17-day test period. The PV
+system advantage in terms of cost and emissions reduction
+is approximately 20.0%, and is reflective of the 21.5% zero-
+net energy (ZNE) that the PV system was sized for. The
+results show that RLC provides further cost reduction of
+up to 6.7% compared to RBC while, neither algorithm pro-
+videssubstantialreductioninemissionsirrespectiveofwhat
+DERs are available. These result from using emissions as
+controlsignalhighlightedtheimportanceofsimultaneously
+decarbonizing the supply-side as demand-side end uses are
+electrified or risk an adverse effect of increased emissions.
+The variance in carbon emissions were less than 1.0% and
+renewableenergysourcesintheElectricReliabilityCouncil
+ofTexas(ERCOT)gridforthetimeperiodwasestimatedat
+only 20.1% with 5.5% standard deviation [21] making it a
+weak control signal.
+Figure 6 shows the RLC actions in the initial seven
+days of the test period for the rlc-b1-c-dhw and rlc-b1-
+c-dhw_bess_pv configurations that have a cost reduction
+objective. The trend in the ESS SoC as a consequence of
+the actions are shown as well as shaded regions to indicate
+thetime-of-use(ToU)pricing.TheSoCtrendshowsthatthe
+RLC agent learns to charge the ESSs during the off-peak
+period while discharging mainly during the on-peak period.
+Compared to the BESS, the DHW TES rarely discharges its
+fullcapacity.Thisobservationisattributedtotheinfrequent
+occurrence of DHW loads where only 7% of the total build-
+ingloadisattributedtoDHWload,asthereisnoDHWload
+during 330/407 control time steps.
+0 5 10 15
+$
+rlc-b1-c-bess_pv
+rlc-b1-c-dhw_bess_pv
+rbc-b1-c-bess_pv
+rbc-b1-c-dhw_bess_pv
+rbc-b1-c-dhw
+rlc-b1-c-dhw
+15.6612.48
+11.64
+11.97
+12.19
+12.30
+15.77
+15.78
+Baseline
+(x-b1_b2-x-x)
+Baseline with PV
+(x-b1_b2-x-pv)
+(a) Cost ($).
+0 50 100 150 200
+kgCO2e
+rbc-b1-e-bess_pv
+rbc-b1-e-dhw_bess_pv
+rlc-b1-e-bess_pv
+rlc-b1-e-dhw_bess_pv
+rbc-b1-e-dhw
+rlc-b1-e-dhw
+222.21178.02
+177.97
+179.38
+179.98
+183.32
+223.62
+223.87
+Baseline
+(x-b1_b2-x-x)
+Baseline with PV
+(x-b1_b2-x-pv)
+(b) Emissions (kgCO2e).
+Figure 5: Cost ($) and emissions (kgCO2e) results in [59] from
+either RBC or RLC of DHW TES, BESS-PV system or both
+when the control objective is to reduce cost or emission. The
+dashed red line shows the cost for a baseline scenario and the
+dotted blue line shows the cost for a baseline scenario but with
+solar generation to augment electricity from the grid.
+4.1.2. Peak reduction
+Thedistrict-leveldailypeakloadisshowninFigure7for
+the baselinewith PVgeneration (x-b1_b2-x-pv) andthe two
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 9 of 24
+
+PDF PAGE 10
+CityLearn v2
+Jun 15 Jun 16 Jun 17 Jun 18 Jun 19 Jun 20 Jun 21
+1.0
+0.5
+0.0
+0.5
+1.0
+Action
+rlc-b1-c-bess_pv
+Jun 15 Jun 16 Jun 17 Jun 18 Jun 19 Jun 20 Jun 21
+1.0
+0.5
+0.0
+0.5
+1.0
+Action
+rlc-b1-c-dhw
+Off-Peak Mid-Peak On-Peak
+0.00
+0.25
+0.50
+0.75
+1.00
+SoC
+0.00
+0.25
+0.50
+0.75
+1.00
+SoC
+Figure 6: RLC action for BESS (left) and DHW TES (right), and consequent SoC trend in the initial seven days of the two-week
+evaluation period when the control objective is to minimize cost in [59].
+Jun 14 16 18 20 22 24 26 28 30
+0.0
+2.5
+5.0
+7.5
+10.0kW
+rbc-b1_b2-p-bess_pv rlc-b1_b2-p-bess_pv x-b1_b2-x-pv
+Figure 7: District-level daily peak load for two-building district
+where each building has BESS-PV system in [59].
+configurations with peak reduction objective but differing
+control algorithms. The RBC inrbc-b1_b2-p-bess_pv that
+has been fine-tuned to target energy discharge during peak
+periods provides a 2.6% advantage in average daily peak
+reductionoverthe rlc-b1_b2-p-bess_pvalternativethatuses
+electricity consumption as a reward signal.
+4.1.3. Discomfort and electricity consumption
+reduction
+Inthe rlc-b1-d_o-hpsimulationthatmodulatesthe cooling_device
+heat pump power, a modified version of the comfort reward
+(Equation (A.34)) is used where only cooling mode is
+considered. Exponents 𝑎 = 1 and 𝑏 = 1 , and a penalty
+coefficient, 𝑚, is multiplied with the reward when there is
+over-cooling i.e., 𝑇in
+𝑡 < 𝑇 spt
+𝑡 . Thus, comfort and energy
+efficiency can be learned by way of this penalty in the
+reward function for increased electricity consumption when
+over-cooling. Table 2 shows the effects on discomfort and
+electricityconsumptionfromtuning 𝑚.Thepercentchanges
+in KPIs by setting𝑚 = 3, 𝑚 = 6, and𝑚 = 12 are compared
+tothebaselinecase, 𝑚 = 1 (nopenaltyforover-cooling).By
+setting 𝑚 = 3, consumption and discomfort are reduced by
+3.0% by 50.0% decrease in over-cooling. In contrast,𝑚 = 3
+increases under-cooling by only 20.0%. Larger increments
+in 𝑚 show an increase in discomfort of almost 100.0% from
+under-cooling compared to the baseline but up to 12.0%
+decreaseinconsumption.However,theaveragetemperature
+difference between the indoor dry-bulb temperature and
+setpoint for the selected 𝑚 values, irrespective of over-
+cooling or under-cooling, is less than 1.5C.
+4.2. Energy storage system control in
+representative single-family neighborhoods
+In[56],theframeworkfordesigningvirtualgrid-interactive
+communitiesisappliedtocreatethreerepresentativesingle-
+family neighborhoods in Alameda County, California (CA);
+Chittenden County, Vermont (VT); and Travis County,
+Texas(TX).Foreachlocation,sixclustersofbuildingmeta-
+data were found from which a frequency-based sampling is
+used to select up to 100 buildings. The CA, VT, and TX
+neighborhoods have 73, 43 and, 100 buildings respectively
+and each building is equipped with BESS-PV system and
+DHWTESinanindependentmulti-agentRLCarchitecture.
+The solar penalty reward, Equation (A.33), that encourages
+net-zero energy use by penalizing load satisfaction from
+the grid when there is stored energy in ESSs as well as
+penalizing net export when ESSs are not fully charged is
+used to train the independent agents.
+Figure 8 compares the district-level net electricity con-
+sumptionforscenarioswithandwithoutstorageforawinter
+week in CA and VT neighborhoods, and a summer week in
+theTXneighborhood.Theshadedregionsshowtheaverage
+SoCBESS ± one standard deviation. In CA and TX, the
+control agents learn to take advantage of the daytime solar
+generationtochargetheBESSsandreleasethestoredenergy
+in the evening thus, reducing the daily peaks by 8.0% and
+42.0% on average in either neighborhood. The VT profiles
+for the cases with and without storage are similar as the
+agentsdonotlearntheloadshiftingtaskasinthecaseofthe
+other two neighborhoods. The SoCBESS distribution in VT
+shows irregular charge-discharge cycles and underutilized
+battery capacity for load shifting. This disparity in the VT
+resultsindicatestheneedforlocation-specificcontrolstrate-
+gies.
+4.3. Vehicle-to-grid control
+The work in [24] demonstrates a V2G scenario in
+CityLearn v2 for a nine-building residential and commer-
+cial building district including a medium-sized office, fast-
+food restaurant, standalone retail store, strip mall, and five
+medium-scale multifamily residences. The control signal is
+the real-time electricity pricing from the Iberian wholesale
+energy market (OMIE) in Portugal. The control algorithm,
+EnergAIze[25]isadecentralizedmulti-agentreinforcement
+learning and is benchmarked against a baseline where there
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 10 of 24
+
+PDF PAGE 11
+CityLearn v2
+Discomfort Over-cool Under-cool Electricity consumption
+𝒎 (◦Ch) ( ◦C) ( ◦C) (kWh)
+1 201.8 0.4 ± 0.5 0 .5 ± 0.5 384.8
+3 195.7 (-3.0%) 0.2 ± 0.2 (-50.0%) 0.6 ± 0.5 (20.0%) 373.0 (-3.0%)
+6 315.9 (56.5%) 0.3 ± 0.2 (-25.0%) 0.9 ± 0.5 (80.0%) 352.5 (-8.3%)
+12 399.6 (98.0%) 0.1 ± 0.4 (-75.0%) 1.0 ± 0.6 (100.0%) 338.1 (-12.0%)
+Table 2
+Effect of coefficient, 𝑚 on discomfort, average discomfort when over-cooling and under-cooling , and electricity consumption
+objectives when used in heat pump control simulation, rlc-b1-d_o-hp ([59]). The percent change in KPI, by varying 𝑚 is
+compared to the baseline case,𝑚 = 1, where there is no penalty for increased consumption from over-cooling. Improvement in a
+KPI is highlighted in blue while deterioration is highlighted in red.
+Mar 25 Mar 26 Mar 27 Mar 28 Mar 29 Mar 30 Mar 31
+250
+0
+kWh
+Alameda Co., CA
+Mar 25 Mar 26 Mar 27 Mar 28 Mar 29 Mar 30 Mar 31
+0
+250
+kWh
+Chittenden Co., VT
+Aug 25 Aug 26 Aug 27 Aug 28 Aug 29 Aug 30 Aug 31
+250
+0
+250
+kWh
+Travis Co., TX
+Consumption
+without storage (baseline)
+Consumption
+with storage Battery SoC
+0.0
+0.5
+1.0
+SoC
+0.0
+0.5
+1.0
+SoC
+0.0
+0.5
+1.0
+SoC
+Figure 8: Results from [56] comparing district-level net elec-
+tricity consumption for scenarios with and without storage.
+The shaded regions show the average SoCBESS ± one standard
+deviation.
+arenoEVloads.Asynthetic12-EVscheduleisusedtotrain
+the reinforcement learning (RL) agent to prioritize.
+Figure 9 shows an EV’s controlled SoC with respect
+to expected departure SoC and real-time pricing for a day,
+where the green region is when the EV is connected to a
+charger. At 8 am, the EV leaves with an SoC close to what
+is expected at departure. On arrival (6 pm onwards), the RL
+agent learns to charge when pricing is low and to discharge
+to the building when pricing is high.
+4.4. Occupant comfort feedback during
+automated demand response
+A case study is presented in [40], where the heat pumps
+of ten single-family homes are controlled for DR during a
+three-monthwinterheatingperiodinMontreal,Quebec.The
+study included two occupant types, Average and Tolerant,
+based on different thermostat temperature setpoint prefer-
+ences, and the integration of the occupants into the control
+scheme was modeled using three level of details (LoDs).
+LoD 1 represents the baseline scenario where fixed setpoint
+schedulesareusedforeachoccupanttypewithnocontrolof
+theHVACsystem.LoD2alsousesafixedsetpointschedule
+Figure 9: Controlled EV SoC in V2G control scenario (top) to
+reduce energy cost for a real-time pricing scheme (bottom).
+The green regiod is when the EV is connected to a charger.
+butassumesoccupantthermalcomfortwithinabandof 2◦C
+from the setpoint schedule following the methodology used
+in [68], thus allowing for flexibility of the HVAC system.
+In the most detailed LoD, LoD 3 incorporates occupant-
+thermostat override models and DR events. The setpoint is
+reduced by 1.1◦C (2◦F) during the three or four-hour DR
+events and the occupants can adjust the setpoint at each
+hourlytimestepduetothermaldiscomfort,whichisdictated
+by the occupant-thermostat override models.
+The EULP dataset provides input data for building en-
+ergy models in CityLearn, and the objective is to determine
+the flexibility services provided through the automated con-
+trol of residential heating systems in a ten-home neighbor-
+hoodthroughsetpointadjustmentsduringDRevents.InLoD
+1thereisnocontrolledresource,whileforLoD2andLoD3
+theSACRLalgorithm[31]isusedtocontroltheheatpump
+power to deliver adequate heating energy to each building
+to maintain indoor temperature in the comfort range for the
+occupant while providing flexibility. The control is evalu-
+ated using grid-level KPIs including cost, total electricity
+consumption, and average daily peak, while also quantify-
+ing occupant discomfort through the number of thermostat
+overridesmade.Figure10showstheelectricityconsumption
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 11 of 24
+
+PDF PAGE 12
+CityLearn v2
+Figure 10: Total electricity consumption during DR hours for
+LoDs 2 and 3 with respect to LoD 1.
+by household during the DR events, during which LoD
+3 implemented thermostat setbacks to specifically target
+electricity reductions during these hours while LoD 1 and
+LoD 2 use the normal setpoint schedules. The results show
+that during the DR events, the electricity consumption was
+reducedbyapproximately17%onaverageduringthesepeak
+hours for LoD 3, even with some occupants overriding the
+setpoint changes during the DR events.
+In addition to energy efficiency metrics, the agents are
+able to also reduce the number of thermostat overrides over
+time. Figure 11 shows the number of thermostat overrides
+throughout the ten training episodes for Buildings 1 and 3
+withTolerantoccupantsandBuildings2and4withAverage
+occupants, where the darker red and blue represent larger
+changes to the setpoint and the light red and blue represent
+smaller changes to the setpoint. The figure shows that the
+agents were thus able to learn the best actions while consid-
+ering the unique preferences and override behaviors of the
+two occupant types, and by using a multi-agent approach,
+the agents are able to learn optimal decision-making that
+achieves both occupant thermal comfort and DR goals.
+5. Discussion
+The heat pump power control example that balances
+comfortandelectricityuse(seeTable2)showsthatoneKPI
+may be improved at the expense of the other. Thus, it is im-
+portant to have a comprehensive quantification of flexibility
+caused by a control solution, including the adverse effects
+it may have. Methods for energy flexibility quantification is
+an open research question [46]. The work by Li et al. has
+focusedonbridgingthisresearchgapbyidentifying48data-
+driven energy flexibility KPIs in the literature [45]. These
+KPIs are further classified as baseline-free and baseline-
+requiredwherethelatterarelesssuitedforrealworlddeploy-
+ment because they require identical boundary conditions as
+the control event scenario for comparison. Ongoing work
+in [39] is to provide these KPIs in a Python package for
+integrationintosimulationenvironmentssuchasCityLearn.
+Thus, a future CityLearn release will integrate this package
+Figure 11: Number of occupant overrides and magnitude of
+the override for the 10 training episodes (adapted from [40]).
+to provide users with a plethora of energy flexibility KPIs
+that better inform their control design.
+In the same vein of realistic control deployment, the ob-
+servationslistedinTableA.1,thoughexhaustiveandindeed
+observable, may be cost prohibitive to sense or calculate in
+practice [8]. An example of such costly observation is solar
+irradiance where few sources provide real-time irradiance
+data and in most cases are behind a paywall. Similarly, the
+real time cooling, heating and DHW loads in a building
+without an accompanying digital twin are challenging to
+measure compared to the electricity consumption that these
+loads depend on. Also, EV departure time is not always
+accuratelyknownaprioriwithoutdeliberateinsightfromthe
+occupant. Yet, the simulation and real-world environments
+should have similar control spaces for reproducibility of
+simulation results in practice. Thus, the control designer
+mustconsiderthepracticalimplicationsoftheirobservation
+space on real world adaptation.
+The example in Section 4.2 assessed energy flexible
+neighborhoods in only three climate zones with a limited
+control period of three months in the winter or summer.
+Whiletheworkdemonstratestheefficacyoftheframework,
+it is limited in providing conclusive results on energy flex-
+ibility of the U.S. residential building stock for the current
+and future climatic conditions. Also, the considered con-
+trolled DERs are limited to only ESS for load shifting with-
+out consideration of flexibility provided by other DERs e.g.
+heatpumpsandEVsnorconsiderationforcontrolresilience
+and occupant model in the control loop. Future work will
+conduct a comprehensive analysis of various DER avail-
+ability configurations in representative neighborhoods of at
+least, the 16 climate zones classifications by ASHRAE that
+differ in temperature and humidity conditions, to provide
+a holistic view of the energy flexibility potential of the
+residential building stock.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 12 of 24
+
+PDF PAGE 13
+CityLearn v2
+The V2G control example shows the potential benefits
+of increased EV adoption when properly managed. The
+observation across the different chargers in the district for
+the entire four-year simulation period is an 11% reduction
+in energy cost and 21% reduction in average daily peak (see
+[24]). With policies aimed at replacing internal combustion
+engine vehicle fleets with EVs, the EV share of controllable
+DERs will increase. There has been a rise of EV sales from
+4%oftotalworldwidecarsalesin2020toover14%in2022
+[65].Thesesalesareincentivizedbytaxcredits[37],access
+tocarpoollanes,reducedcarregistrationfees,andsubsidies
+for constructing residential charging stations [27].
+The work on integrating the occupant thermal comfort
+feedback presented in Section 4.4, it is important to note
+that all occupant modeling was done using ecobee’s Donate
+YourDatadataset[50]forhomesinQuebec,Canadaduring
+the winter heating season. As such, future work would be
+required to determine the occupant models’ applicability
+in other climates, and additional location-specific override
+modelscouldbedevelopedusingthemethodologypresented
+in the study. However, one of the key contributions of this
+work is showing the impact that the occupant behavior LoD
+has on the load shifting potential and occupant thermal
+comfort. We provide several examples via the LoDs of how
+one may incorporate occupants in the control scheme that
+reflect a more realistic scenario of a DR program in which
+occupants are allowed to opt out of thermostat setbacks
+during the DR events.
+While existing literature has demonstrated control scal-
+ability in CityLearn [2], a challenge of large scale analysis
+especially using RLC is that it may be computationally and
+data cost prohibitive to train a unique control policy for
+each building. Transfer learning can alleviate these costs by
+leveragingthetrainedpolicyofasourcebuildingtoinitialize
+those of the remaining target buildings with outcomes that
+are better or comparable to baseline and reference control
+policies [58, 12]. On the other hand, with the diversity
+of control tasks i.e., controllable DERs, meta-learning can
+provideageneralizedalgorithm-agnosticcontrolpolicythat
+can quickly adapt to any single control task [4]. Yet, there
+arefewapplicationsofmeta-learninginbuildingcontroland
+demand response [51]. A meta-policy will allow for decen-
+tralized heterogeneous control that depicts real world large
+scale deployment of advanced controllers where different
+buildings, and in special cases, different DERs, use unique
+control algorithms, observation and action spaces [88].
+We note that the heat pump model in CityLearn as-
+sumes an ideal refrigeration cycle and the coefficient of
+performance (COP) is temperature-driven alone. Also, the
+control signal for the heat pump at this time does not allow
+for thermostatic control of the heat pump through setpoints
+which could limit its suitability for true demand response
+applications. Thus, CityLearn is best applied to simple and
+quickcomparativeanalysisbetweencontrolalgorithmswith
+minimal design cost. Whereas, an environment that utilizes
+high-fidelityenergymodelse.g.,OCHRE[7]isbettersuited
+foranalysesthatarepurposedforscrutinyofabsoluteenergy
+and cost values. However, the challenge with using these
+high-fidelity environments is their computational overhead
+cost.
+One limitation of CityLearn is that there are no district
+energy system models such as centralized PV system, ESS,
+geothermalcoolingorheatinginfrastructure.However,from
+a control perspective, the buildings can share information
+about their states to achieve district-level energy flexibil-
+ity. Future work could consider the integration of such
+systems in the environment with reference to simulation
+environments like CityBES [33] and URBANopt [20]. Fu-
+ture development of CityLearn may also include adding
+multi-zone building thermal models that allow simultane-
+ous cooling and heating as well as consideration of indoor
+humidity loads, and adding indoor air quality models and
+consideration of IEQ metrics in the KPIs. Field validation
+of CityLearn in real building districts is also needed to
+demonstrate its usability and performance, as well as to
+inform the development of best practice guides.
+Despite its potential, there are still open questions re-
+garding the plug-and-play capabilities, performance, safety
+ofoperation,andlearningspeedofRLC[19].TheCityLearn
+Challenge is an avenue for crowd-sourcing solutions to
+building control problems, using any control algorithm of
+choice. It attracts a multidisciplinary participation includ-
+ing researchers, industry experts, sustainability enthusiasts
+and artificial intelligence (AI) hobbyists with a focus on
+DER control algorithm benchmarking for demand response
+and energy flexibility settings. Previous editions of The
+CityLearn Challenge have investigated control policy trans-
+ferrability across different climate zones [84], a realistic
+implementationofmodel-freeRLCinbuildingswheretrain-
+ing and evaluation were done on a single four-year episode
+[54], and BESS control using a real-world ZNE community
+datasetforcostandemissionsoptimization[60].Othercom-
+petitionsintheenergydomainfocusonbuildingloadpredic-
+tions [52], grid power flow optimization [32] and pathways
+to building electrification and decarbonization [63]. Thus,
+we envision opportunities for collaboration amongst these
+different competitions where their unique objectives and
+experience, can provide holistic solutions to the problems
+in the building energy and control communities.
+6. Conclusion
+Inthispaper,weintroduceCityLearnv2,anenvironment
+basedontheFaramaFoundationGymnasiuminterface,that
+leverages the End-Use Load Profiles for the U.S. Building
+Stock dataset to create virtual grid-interactive communities
+for benchmarking resilient multi- agent, distributed energy
+resource and objective control with dynamic occupant feed-
+back.CityLearnallowsforcustombuildingdistrictsasusers
+can select which buildings to include, distributed energy
+resources to control, and observations to sense. Users can
+also design custom reward functions and choose between
+three control configurations: central single-agent, indepen-
+dentmulti-agentandcoordinatedmulti-agentwithprovision
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 13 of 24
+
+PDF PAGE 14
+CityLearn v2
+of in-built control algorithms and support for third-party
+controllibraries.Thesemodellingoptionsimprovethelevel
+of realism in CityLearn, which is an important guideline
+when designing these kinds of environments [89].
+Rolnicketal.investigatehowthemachinelearningcom-
+munity can help tackle climate change [74]. The authors
+identify electrification of urban energy systems as a field
+where machine learning can provide high leverage. The
+reviewofusecasesofmachinelearninginthebuilding’slife
+cyclebyHongetal.indicatespromisingpotentialofmachine
+learning based smart controls for grid-interactive efficient
+buildings[34].CityLearnisaimedpreciselyatthisobjective,
+and a standardized environment, distributed as educational
+material[62],willallowmoreresearchersfromthecomputer
+science and machine learning communities to participate
+in the search for solutions to tackle climate change. Also,
+by simplifying the building energy system and providing
+different environment datasets, CityLearn can help building
+energy engineers and control engineers to focus on control
+algorithm development with less time spent setting up the
+environment.
+Lastly, the application examples presented in this work
+arebynomeansanexhaustivedemonstrationofCityLearn’s
+functionalities. Instead, we envision that our contribution
+provides environment and control examples as well as their
+implementationsourcecodeforactorsinthebuildingcontrol
+community who are interested in using CityLearn to solve
+their distributed energy resource control problems.
+7. Declaration of competing interest
+The authors certify that they have no affiliations with or
+involvement in any organization or entity with any financial
+interest, or non-financial interest in the subject matter or
+materials discussed in this manuscript.
+References
+[1] Akbari, S., Haghighat, F., 2021. Occupancy and occupant activ-
+ity drivers of energy consumption in residential buildings. En-
+ergy and Buildings 250, 111303. URL:https://www.sciencedirect.
+com/science/article/pii/S0378778821005879,doi: https://doi.org/10.
+1016/j.enbuild.2021.111303.
+[2] Almilaify, Y., Nweye, K., Nagy, Z., 2023. SCALEX: SCALability
+EXplorationofMulti-AgentReinforcementLearningAgentsinGrid-
+Interactive Efficient Buildings, in: Proceedings of the 10th ACM
+International Conference on Systems for Energy-Efficient Buildings,
+Cities, and Transportation, Association for Computing Machinery,
+New York, NY, USA. pp. 261–264. URL:https://doi.org/10.1145/
+3600100.3623749, doi:10.1145/3600100.3623749.
+[3] Arroyo, J., Verleyen, L., Bex, L., Hermans, L., Saeed, M., Lu, Y.,
+Depoortere, J., Bálint, A., Delarue, E., Driesen, J., Deconinck, G.,
+Blum, D., Helsen, L., 2023. Prototyping the DOPTEST Framework
+for Simulation-Based Testing of System Integration Strategies in
+Districts.
+[4] Beck, J., Vuorio, R., Liu, E.Z., Xiong, Z., Zintgraf, L., Finn, C.,
+Whiteson,S.,2023. ASurveyofMeta-ReinforcementLearningURL:
+https://arxiv.org/abs/2301.08028, doi:10.48550/ARXIV.2301.08028.
+[5] BirkJones,C.,Vining,W.,Lave,M.,Haines,T.,Neuman,C.,Bennett,
+J., Scoffield, D.R., 2022. Impact of Electric Vehicle customer re-
+sponse to Time-of-Use rates on distribution power grids. Energy Re-
+ports 8, 8225–8235. URL:https://www.sciencedirect.com/science/
+article/pii/S235248472201188X, doi:10.1016/j.egyr.2022.06.048.
+[6] Blair,N.,Dobos,A.P.,Freeman,J.,Neises,T.,Wagner,M.,Ferguson,
+T., Gilman, P., Janzou, S., 2014. System advisor model, sam 2014.1.
+14: General description. Technical Report. National Renewable
+Energy Lab.(NREL), Golden, CO (United States).
+[7] Blonsky, M., Maguire, J., McKenna, K., Cutler, D., Balamurugan,
+S.P.,Jin,X.,2021.OCHRE:TheObject-oriented,Controllable,High-
+resolution Residential Energy Model for Dynamic Integration Stud-
+ies. Applied Energy 290, 116732. URL:https://www.sciencedirect.
+com/science/article/pii/S0306261921002464,doi: 10.1016/j.apenergy.
+2021.116732.
+[8] Blum, D., Arroyo, J., Huang, S., Drgoňa, J., Jorissen, F., Wal-
+num, H.T., Chen, Y., Benne, K., Vrabie, D., Wetter, M., Helsen,
+L., 2021. Building optimization testing framework (BOPTEST)
+for simulation-based benchmarking of control strategies in build-
+ings. Journal of Building Performance Simulation 14, 586–
+610. URL:https://www.tandfonline.com/doi/full/10.1080/19401493.
+2021.1986574, doi:10.1080/19401493.2021.1986574.
+[9] Brockman,G.,Cheung,V.,Pettersson,L.,Schneider,J.,Schulman,J.,
+Tang,J.,Zaremba,W.,2016. OpenAIGym. URL: http://arxiv.org/
+abs/1606.01540, doi: 10.48550/arXiv.1606.01540. arXiv:1606.01540
+[cs].
+[10] Busby, J.W., Baker, K., Bazilian, M.D., Gilbert, A.Q., Grubert,
+E., Rai, V., Rhodes, J.D., Shidore, S., Smith, C.A., Webber,
+M.E., 2021. Cascading risks: Understanding the 2021 win-
+ter blackout in Texas. Energy Research & Social Science 77,
+102106. URL: https://www.sciencedirect.com/science/article/pii/
+S2214629621001997, doi:10.1016/j.erss.2021.102106.
+[11] California Independent System Operator, 2016. What the duck curve
+tells us about managing a green grid. URL:https://www.caiso.com/
+documents/flexibleresourceshelprenewables_fastfacts.pdf.
+[12] Coraci,D.,Brandi,S.,Hong,T.,Capozzoli,A.,2023. Onlinetransfer
+learningstrategyforenhancingthescalabilityanddeploymentofdeep
+reinforcement learning control in smart buildings. Applied Energy
+333,120598. URL: https://www.sciencedirect.com/science/article/
+pii/S0306261922018554, doi:10.1016/j.apenergy.2022.120598.
+[13] Crawley, D.B., Lawrie, L.K., Winkelmann, F.C., Buhl, W.F., Huang,
+Y.J., Pedersen, C.O., Strand, R.K., Liesen, R.J., Fisher, D.E., Witte,
+M.J.,Glazer,J.,2001.EnergyPlus:creatinganew-generationbuilding
+energy simulation program. Energy and Buildings 33, 319–331.
+[14] Deltetto, D., 2020. Data-driven coordinated building cluster energy
+management to enhance energy efficiency, comfort and grid stabil-
+ity. laurea. Politecnico di Torino. URL:https://webthesis.biblio.
+polito.it/16358/.
+[15] Deltetto, D., Coraci, D., Pinto, G., Piscitelli, M.S., Capozzoli, A.,
+2021. Exploring the potentialities of deep reinforcement learning for
+incentive-based demand response in a cluster of small commercial
+buildings. Energies 14. doi:10.3390/en14102933.
+[16] Dhamankar, G., Vazquez-Canteli, J.R., Nagy, Z., 2020. Bench-
+marking Multi-Agent Deep Reinforcement Learning Algorithms on
+a Building Energy Demand Coordination Task. RLEM 2020 -
+Proceedings of the 1st International Workshop on Reinforcement
+Learning for Energy Management in Buildings and Cities , 15–
+19doi:10.1145/3427773.3427870. iSBN: 9781450381932.
+[17] D’Oca,S.,Gunay,H.B.,Gilani,S.,O’Brien,W.,2019.Criticalreview
+and illustrative examples of office occupant modelling formalisms.
+BuildingServicesEngineeringResearch&Technology40,732–757.
+doi:https://doi.org/10.1177/0143624419827.
+[18] Drgoňa, J., Arroyo, J., Cupeiro Figueroa, I., Blum, D., Arendt, K.,
+Kim, D., Ollé, E.P., Oravec, J., Wetter, M., Vrabie, D.L., Helsen,
+L., 2020. All you need to know about model predictive control for
+buildings. Annual Reviews in Control 50, 190–232. doi:10.1016/j.
+arcontrol.2020.09.001.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 14 of 24
+
+PDF PAGE 15
+CityLearn v2
+[19] Dulac-Arnold, G., Levine, N., Mankowitz, D.J., Li, J., Paduraru, C.,
+Gowal, S., Hester, T., 2021. Challenges of real-world reinforcement
+learning: definitions, benchmarks and analysis. Machine Learning
+110, 2419–2468. Publisher: Springer.
+[20] El Kontar, R., Polly, B., Charan, T., Fleming, K., Moore, N., Long,
+N., Goldwasser, D., 2020. URBANopt: An Open-Source Software
+Development Kit for Community and Urban District Energy Mod-
+eling: Preprint. Technical Report NREL/CP-5500-76781. National
+Renewable Energy Lab. (NREL), Golden, CO (United States). URL:
+https://www.osti.gov/biblio/1677416.
+[21] Electric Reliability Council of Texas, 2021. Fuel Mix Report: 2007 -
+2020. URL: https://www.ercot.com/gridinfo/generation.
+[22] Fanger, P., 1970. Thermal Comfort. Danish Technical Press,
+Copenhagen.
+[23] Feng, K., Ouyang, M., Lin, N., 2022. Tropical cyclone-blackout-
+heatwave compound hazard resilience in a changing climate. Nature
+Communications 13, 4421. URL:https://www.nature.com/articles/
+s41467-022-32018-4, doi:10.1038/s41467-022-32018-4. publisher: Na-
+ture Publishing Group.
+[24] Fonseca,T.,Ferreira,L.,Cabral,B.,Severino,R.,Nweye,K.,Ghose,
+D., Nagy, Z., 2024a. EVLearn: Extending the CityLearn Framework
+with Electric Vehicle Simulation. URL:http://arxiv.org/abs/2404.
+06521, doi:10.48550/arXiv.2404.06521. arXiv:2404.06521 [cs, eess].
+[25] Fonseca,T.,Ferreira,L.L.,Cabral,B.,Severino,R.S.,Prca,I.,2024b.
+Energaize: Multi agent deep deterministic policy gradient for vehicle
+to grid energy managementarXiv:2404.02361.
+[26] Galvin, R., 2022. Are electric vehicles getting too big and heavy?
+Modelling future vehicle journeying demand on a decarbonized
+US electricity grid. Energy Policy 161, 112746. URL: https:
+//www.sciencedirect.com/science/article/pii/S0301421521006121,
+doi:10.1016/j.enpol.2021.112746.
+[27] Ghose,D.,2023. Studyingpresentandfutureelectricvehicleimpacts
+on the city of Austin’s power grid. Ph.D. thesis. URL: https:
+//hdl.handle.net/2152/119250.
+[28] Glatt,R.,Silva,F.L.d.,Soper,B.,Dawson,W.A.,Rusu,E.,Goldhahn,
+R.A., 2021. Collaborative energy demand response with decentral-
+ized actor and centralized critic, in: Proceedings of the 8th ACM
+International Conference on Systems for Energy-Efficient Buildings,
+Cities,andTransportation,ACM,NewYork,NY,USA.pp.333–337.
+URL: https://dl.acm.org/doi/10.1145/3486611.3488732,doi: 10.1145/
+3486611.3488732.
+[29] Gowrisankaran,G.,Reynolds,S.S.,Samano,M.,2016. Intermittency
+and the Value of Renewable Energy. Journal of Political Economy
+124,1187–1234.URL:https://doi.org/10.1086/686733,doi: 10.1086/
+686733. _eprint: https://doi.org/10.1086/686733.
+[30] Gunay, H.B., O’Brien, W., Beausoleil-Morrison, I., Bursill,
+J., 2018. Development and implementation of a thermostat
+learning algorithm. Science and Technology for the Built
+Environment 24, 43–56. URL: https://doi.org/10.1080/
+23744731.2017.1328956, doi: 10.1080/23744731.2017.1328956,
+arXiv:https://doi.org/10.1080/23744731.2017.1328956.
+[31] Haarnoja, T., Zhou, A., Abbeel, P., Levine, S., 2018. Soft Actor-
+Critic: Off-Policy Maximum Entropy Deep Reinforcement Learn-
+ing with a Stochastic Actor URL:https://arxiv.org/abs/1801.01290,
+doi:10.48550/ARXIV.1801.01290.
+[32] Holzer,J.,Coffrin,C.,DeMarco,C.,Duthu,R.,Elbert,S.,Greene,S.,
+Kuchar, O., Lesieutre, B., Li, H., Mak, W.K., others, 2021. Grid Op-
+timizationCompetitionChallenge2ProblemFormulation. Technical
+Report. Tech. rep. ARPA-E.
+[33] Hong, T., Chen, Y., Lee, S.H., Piette, M., 2016. CityBES: A Web-
+based Platform to Support City-Scale Building Energy Efficiency.
+[34] Hong, T., Wang, Z., Luo, X., Zhang, W., 2020. State-of-the-art on
+research and applications of machine learning in the building life
+cycle. Energy and Buildings 212. URL:https://www.sciencedirect.
+com/science/article/pii/S0378778819337879,doi: https://doi.org/10.
+1016/j.enbuild.2020.109831.
+[35] Horsey, H., Parker, A., Farthing, A., Dahlhausen, M., Praprost, M.,
+Bianchi, C., Robertson, J., Horowitz, S., Zhang, L., 2020. Com-
+Stock™ . Technical Report. National Renewable Energy Laboratory
+(NREL), Golden, CO (United States). URL:https://www.osti.gov/
+biblio/1817851, doi:10.11578/dc.20210830.5.
+[36] IEEE, 2012. IEEE Guide for Electric Power Distribution Reliability
+Indices. doi:10.1109/IEEESTD.2012.6209381. conference Name: IEEE
+Std 1366-2012 (Revision of IEEE Std 1366-2003).
+[37] Jenn, A., Springel, K., Gopal, A.R., 2018. Effectiveness of elec-
+tric vehicle incentives in the United States. Energy Policy 119,
+349–356. URL: https://www.sciencedirect.com/science/article/
+pii/S0301421518302891, doi:10.1016/j.enpol.2018.04.065.
+[38] Jensen, S.O., Marszal-Pomianowska, A., Lollini, R., Pasut, W.,
+Knotzer, A., Engelmann, P., Stafford, A., Reynders, G., 2017. IEA
+EBC Annex 67 Energy Flexible Buildings. Energy and Buildings
+155, 25–34.
+[39] Johra, H., Li, H., de Andrade Pereira, F., Nweye, K., Chamari, L.,
+Nagy,Z.,2023. IEAEBCAnnex81â €“Data-drivensmartbuildings:
+Building-to-grid applications, in: Proceedings of building simula-
+tion 2023: 18th conference of IBPSA, IBPSA, Shanghai, China.
+pp. 2537–2544. URL:https://publications.ibpsa.org/conference/
+paper/?id=bs2023_1305,doi: https://doi.org/10.26868/25222708.2023.
+1305. iSSN: 2522-2708 tex.organisation: IBPSA.
+[40] Kaspar,K.,Nweye,K.,Buscemi,G.,Ouf,M.M.,Capozzoli,A.,Nagy,
+Z., Pinto, G., Eicker, U., 2024. Demand response through automated
+control of heat pumps and integrated occupant comfort feedback for
+a ten-home neighborhood using citylearn. [Submitted for Review].
+[41] Kathirgamanathan, A., Twardowski, K., Mangina, E., Finn, D.P.,
+2020. A Centralised Soft Actor Critic Deep Reinforcement Learning
+Approach to District Demand Side Management through CityLearn,
+in: Proceedings of the 1st International Workshop on Reinforcement
+Learning for Energy Management in Buildings & Cities, ACM, New
+York, NY, USA. pp. 11–14. URL:https://dl.acm.org/doi/10.1145/
+3427773.3427869, doi:10.1145/3427773.3427869.
+[42] Kostopoulos, E.D., Spyropoulos, G.C., Kaldellis, J.K., 2020. Real-
+world study for the optimal charging of electric vehicles. Energy
+Reports 6, 418–426. URL:https://www.sciencedirect.com/science/
+article/pii/S2352484719310911, doi:10.1016/j.egyr.2019.12.008.
+[43] Lee, J., Kim, J.M., Yi, J., Won, C.Y., 2021. Battery Management
+System Algorithm for Energy Storage Systems Considering Battery
+Efficiency. Electronics 10, 1859. URL: https://www.mdpi.com/
+2079-9292/10/15/1859, doi:10.3390/electronics10151859. number: 15
+Publisher: Multidisciplinary Digital Publishing Institute.
+[44] Lee, Z.E., Max Zhang, K., 2022. Unintended consequences of smart
+thermostats in the transition to electrified heating. Applied Energy
+322,119384. URL: https://www.sciencedirect.com/science/article/
+pii/S0306261922007243, doi:10.1016/j.apenergy.2022.119384.
+[45] Li, H., Johra, H., de Andrade Pereira, F., Hong, T., Le Dréau,
+J., Maturo, A., Wei, M., Liu, Y., Saberi-Derakhtenjani, A., Nagy,
+Z., Marszal-Pomianowska, A., Finn, D., Miyata, S., Kaspar, K.,
+Nweye, K., O’Neill, Z., Pallonetto, F., Dong, B., 2023. Data-
+driven key performance indicators and datasets for building en-
+ergy flexibility: A review and perspectives. Applied Energy 343,
+121217. URL: https://www.sciencedirect.com/science/article/pii/
+S0306261923005810, doi:10.1016/j.apenergy.2023.121217.
+[46] Li, R., Satchwell, A.J., Finn, D., Christensen, T.H., Kummert,
+M., Le Dréau, J., Lopes, R.A., Madsen, H., Salom, J., Henze, G.,
+Wittchen, K., 2022. Ten questions concerning energy flexibility in
+buildings. Building and Environment 223, 109461. URL: https:
+//www.sciencedirect.com/science/article/pii/S0360132322006928,
+doi:10.1016/j.buildenv.2022.109461.
+[47] Liang, E., Liaw, R., Moritz, P., Nishihara, R., Fox, R., Goldberg, K.,
+Gonzalez, J.E., Jordan, M.I., Stoica, I., 2017. RLlib: Abstractions for
+Distributed Reinforcement Learning. URL:https://arxiv.org/abs/
+1712.09381v4.
+[48] Liu, W., Gunay, H.B., Ouf, M.M., 2021. Modeling window and
+thermostat use behavior to inform sequences of operation in mixed-
+mode ventilation buildings. Science and Technology for the Built
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 15 of 24
+
+PDF PAGE 16
+CityLearn v2
+Environment 27, 1204–1220. URL: https://www.tandfonline.com/
+doi/full/10.1080/23744731.2021.1936629,doi: 10.1080/23744731.2021.
+1936629.
+[49] Lu, X., Fu, Y., O’Neill, Z., 2023. Benchmarking high performance
+HVAC Rule-Based controls with advanced intelligent Controllers: A
+casestudyinaMulti-ZonesysteminModelica. EnergyandBuildings
+284,112854. URL: https://www.sciencedirect.com/science/article/
+pii/S0378778823000841, doi:10.1016/j.enbuild.2023.112854.
+[50] Luo, N., Hong, T., 2022. Ecobee Donate Your Data 1,000 homes
+in 2017. Technical Report 69035. Pacific Northwest National Lab.
+(PNNL),Richland,WA(UnitedStates);LawrenceBerkeleyNational
+Lab.(LBNL),Berkeley,CA(UnitedStates). URL: https://www.osti.
+gov/biblio/1854924, doi:10.25584/ecobee/1854924.
+[51] Mason,K.,Grijalva,S.,2019. Areviewofreinforcementlearningfor
+autonomous building energy management. Computers & Electrical
+Engineering 78, 300–312. URL: https://www.sciencedirect.com/
+science/article/pii/S0045790618333421, doi: 10.1016/j.compeleceng.
+2019.07.019.
+[52] Miller, C., Arjunan, P., Kathirgamanathan, A., Fu, C., Roth, J., Park,
+J.Y., Balbach, C., Gowri, K., Nagy, Z., Fontanini, A.D., Haberl,
+J., 2020. The ASHRAE Great Energy Predictor III competition:
+Overview and results. Science and Technology for the Built Envi-
+ronment 26, 1427–1447. URL:https://doi.org/10.1080/23744731.
+2020.1795514, doi:10.1080/23744731.2020.1795514. publisher: Taylor
+& Francis _eprint: https://doi.org/10.1080/23744731.2020.1795514.
+[53] Nagy,Z.,Henze,G.,Dey,S.,Arroyo,J.,Helsen,L.,Zhang,X.,Chen,
+B., Amasyali, K., Kurte, K., Zamzam, A., Zandi, H., Drgoňa, J.,
+Quintana,M.,McCullogh,S.,Park,J.Y.,Li,H.,Hong,T.,Brandi,S.,
+Pinto,G.,Capozzoli,A.,Vrabie,D.,Bergés,M.,Nweye,K.,Marzullo,
+T., Bernstein, A., 2023. Ten questions concerning reinforcement
+learningforbuildingenergymanagement. BuildingandEnvironment
+241,110435. URL: https://www.sciencedirect.com/science/article/
+pii/S0360132323004626, doi:10.1016/j.buildenv.2023.110435.
+[54] Nagy, Z., Vázquez-Canteli, J.R., Dey, S., Henze, G., 2021. The
+citylearn challenge 2021, in: Proceedings of the 8th ACM Interna-
+tional Conference on Systems for Energy-Efficient Buildings, Cities,
+and Transportation, ACM, New York, NY, USA. pp. 218–219.
+URL: https://dl.acm.org/doi/10.1145/3486611.3492226,doi: 10.1145/
+3486611.3492226.
+[55] Neukomm,M.,Nubbe,V.,Fares,R., 2019. Grid-InteractiveEfficient
+Buildings URL: https://www.osti.gov/biblio/1508212, doi:10.2172/
+1508212.
+[56] Nweye, K., Kaspar, K., Buscemi, G., Pinto, G., Li, H., Hong,
+T., Ouf, M., Capozzoli, A., Nagy, Z., 2023a. A framework
+for the design of representative neighborhoods for energy flexibil-
+ity assessment in CityLearn, in: Proceedings of building simula-
+tion 2023: 18th conference of IBPSA, IBPSA, Shanghai, China.
+pp. 3351–3358. URL:https://publications.ibpsa.org/conference/
+paper/?id=bs2023_1404,doi: https://doi.org/10.26868/25222708.2023.
+1404. iSSN: 2522-2708 tex.organisation: IBPSA.
+[57] Nweye, K., Liu, B., Stone, P., Nagy, Z., 2022a. Real-world
+challenges for multi-agent reinforcement learning in grid-
+interactive buildings. Energy and AI 10, 100202. URL: https:
+//www.sciencedirect.com/science/article/pii/S2666546822000489,
+doi:10.1016/j.egyai.2022.100202.
+[58] Nweye, K., Nagy, Z., 2022. MARTINI: Smart meter driven
+estimation of HVAC schedules and energy savings based on Wi-Fi
+sensing and clustering. Applied Energy 316, 118980. URL:https:
+//www.sciencedirect.com/science/article/pii/S0306261922003890,
+doi:10.1016/j.apenergy.2022.118980.
+[59] Nweye, K., Nagy, Z., 2024. Applications in CityLearn gym envi-
+ronment for multi-objective control benchmarking in grid-interactive
+buildingsanddistricts,AcceptedforpublicationinSimbuild2024by
+IBPSA-USA, Denver, Colorado.
+[60] Nweye, K., Nagy, Z., Mohanty, S., Chakraborty, D., Sankara-
+narayanan,S.,Hong,T.,Dey,S.,Henze,G.,Drgona,J.,Lin,F.,Jiang,
+W.,Zhang,H.,Yi,Z.,Zhang,J.,Yang,C.,Motoki,M.,Khongnawang,
+S.,Ibrahim,M.,Zhumabekov,A.,May,D.,Yang,Z.,Song,X.,Zhang,
+H., Dong, X., Zheng, S., Bian, J., 2022b. The CityLearn Challenge
+2022:Overview,Results,andLessonsLearned,in:Proceedingsofthe
+NeurIPS2022CompetitionsTrack,PMLR.pp.85–103. URL: https:
+//proceedings.mlr.press/v220/nweye22a.html. iSSN: 2640-3498.
+[61] Nweye, K., Sankaranarayanan, S., Nagy, Z., 2023b. MERLIN:
+Multi-agent offline and transfer learning for occupant-centric op-
+eration of grid-interactive communities. Applied Energy 346,
+121323. URL: https://www.sciencedirect.com/science/article/pii/
+S0306261923006876, doi:10.1016/j.apenergy.2023.121323.
+[62] Nweye, K.E., Wu, A., Park, H., Almilaify, Y., Nagy, Z., 2023c.
+CityLearn: A tutorial on reinforcement learning control for grid-
+interactiveefficientbuildingsandcommunities,in:ICLR2023work-
+shopontacklingclimatechangewithmachinelearning. URL: https:
+//www.climatechange.ai/papers/iclr2023/2.
+[63] NYSERDA, 2022. NYSERDA RTEM Hackathon Demo Day. URL:
+https://be-exchange.org/nyserda-rtem-hackathon-demo-day/ .
+[64] Panchabikesan, K., Ouf, M., Eicker, U., Newsham, G., Knudsen,
+H., 2021. Investigating thermostat setpoint preferences in Canadian
+households, in: Proceedings of the 17th IBPSA Conference, Bruges,
+Belgium. URL: https://publications.ibpsa.org/conference/paper/
+?id=bs2021_30433, doi:10.26868/25222708.2021.30433.
+[65] Paoli, L., 2023. Trends in electric light-duty vehicles. Technical
+Report. International Energy Agency.
+[66] Pedersen,T.B.,Šikšnys,L.,Neupane,B.,2018.Modelingandmanag-
+ingenergyflexibilityusingflexoffers,1–7doi: 10.1109/SmartGridComm.
+2018.8587605.
+[67] Pigott, A., Crozier, C., Baker, K., Nagy, Z., 2022. Gri-
+dLearn: Multiagent reinforcement learning for grid-aware build-
+ing energy management. Electric Power Systems Research 213,
+108521. URL: https://www.sciencedirect.com/science/article/pii/
+S0378779622006320, doi:https://doi.org/10.1016/j.epsr.2022.108521.
+[68] Pinto, G., Deltetto, D., Capozzoli, A., 2021a. Data-driven
+district energy management with surrogate models and deep
+reinforcement learning. Applied Energy 304, 117642. URL:https:
+//www.sciencedirect.com/science/article/pii/S0306261921010096,
+doi:10.1016/j.apenergy.2021.117642.
+[69] Pinto,G.,Kathirgamanathan,A.,Mangina,E.,Finn,D.P.,Capozzoli,
+A., 2022. Enhancing energy management in grid-interactive build-
+ings:Acomparisonamongcooperativeandcoordinatedarchitectures.
+Applied Energy 310, 118497. URL: https://www.sciencedirect.
+com/science/article/pii/S0306261921017128,doi: https://doi.org/10.
+1016/j.apenergy.2021.118497.
+[70] Pinto, G., Piscitelli, M.S., Vázquez-Canteli, J.R., Nagy, Z., Capoz-
+zoli, A., 2021b. Coordinated energy management for a cluster
+of buildings through deep reinforcement learning. Energy 229,
+120725. URL: https://www.sciencedirect.com/science/article/pii/
+S0360544221009737, doi:10.1016/j.energy.2021.120725.
+[71] Qin, R., Gao, S., Zhang, X., Xu, Z., Huang, S., Li, Z., Zhang, W.,
+Yu, Y., 2021. NeoRL: A Near Real-World Benchmark for Offline
+Reinforcement Learning URL:http://arxiv.org/abs/2102.00714.
+[72] Raffin, A., Hill, A., Gleave, A., Kanervisto, A., Ernestus, M., Dor-
+mann,N.,2021. Stable-Baselines3:ReliableReinforcementLearning
+Implementations. Journal of Machine Learning Research 22, 1–8.
+URL: http://jmlr.org/papers/v22/20-1364.html.
+[73] Richard S. Sutton and Andrew G. Barto, 2018. Reinforcement
+Learning, Second Edition An Introduction.
+[74] Rolnick, D., Donti, P.L., Kaack, L.H., Kochanski, K., Lacoste,
+A., Sankaran, K., Ross, A.S., Milojevic-Dupont, N., Jaques, N.,
+Waldman-Brown, A., Luccioni, A.S., Maharaj, T., Sherwin, E.D.,
+Mukkavilli,S.K.,Kording,K.P.,Gomes,C.P.,Ng,A.Y.,Hassabis,D.,
+Platt,J.C.,Creutzig,F.,Chayes,J.,Bengio,Y.,2022.TacklingClimate
+ChangewithMachineLearning. ACMComputingSurveys55,42:1–
+42:96. URL: https://dl.acm.org/doi/10.1145/3485128, doi:10.1145/
+3485128.
+[75] Rousseeuw, P.J., 1987. Silhouettes: A graphical aid to the inter-
+pretation and validation of cluster analysis. Journal of Computa-
+tional and Applied Mathematics 20, 53–65. URL: https://www.
+sciencedirect.com/science/article/pii/0377042787901257,doi: https:
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 16 of 24
+
+PDF PAGE 17
+CityLearn v2
+//doi.org/10.1016/0377-0427(87)90125-7.
+[76] Scharnhorst, P., Schubnel, B., Fernández Bandera, C., Salom, J.,
+Taddeo, P., Boegli, M., Gorecki, T., Stauffer, Y., Peppas, A., Politi,
+C., 2021. Energym: A building model library for controller bench-
+marking. Applied Sciences 11, 3518. Publisher: MDPI.
+[77] Suberu, M.Y., Mustafa, M.W., Bashir, N., 2014. Energy storage
+systems for renewable energy power sector integration and mitiga-
+tion of intermittency. Renewable and Sustainable Energy Reviews
+35,499–514. URL:https://www.sciencedirect.com/science/article/
+pii/S1364032114002366,doi: https://doi.org/10.1016/j.rser.2014.04.
+009.
+[78] Towers, M., Terry, J.K., Kwiatkowski, A., Balis, J.U., Cola, G.d.,
+Deleu, T., Goulão, M., Kallinteris, A., KG, A., Krimmel, M., Perez-
+Vicente, R., Pierré, A., Schulhoff, S., Tai, J.J., Shen, A.T.J., Younis,
+O.G., 2023. Gymnasium. URL:https://zenodo.org/record/8127025,
+doi:10.5281/zenodo.8127026.
+[79] U.S. Department of Energy, 2021. Next-Generation Grid
+Technologies. Technical Report. U.S. Department of Energy.
+URL: https://www.energy.gov/sites/default/files/2022-05/Next%
+20Generation%20Grid%20Technologies%20Report%20051222.pdf.
+[80] U.S. Energy Information Administration, . Table 11.3 Reliability
+Metrics Using Any Method of U.S. Distribution System by State,
+2022and2021. URL: https://www.eia.gov/electricity/annual/html/
+epa_11_03.html.
+[81] Varesi, K., Radan, A., Ghayebloo, A., Nikzad, M.R., 2016. An
+Efficient Methodology Proposed For Deciding About the Number of
+Battery Modules In Hybrid Electric Vehicles. Automatika 57, 99–
+108. URL: https://doi.org/10.7305/automatika.2016.07.693, doi:10.
+7305/automatika.2016.07.693. publisher: Taylor & Francis _eprint:
+https://doi.org/10.7305/automatika.2016.07.693.
+[82] Vazquez-Canteli, J.R., Henze, G., Nagy, Z., 2020. MARLISA:
+Multi-Agent Reinforcement Learning with Iterative Sequential Ac-
+tionSelectionforLoadShapingofGrid-InteractiveConnectedBuild-
+ings. BuildSys 2020 - Proceedings of the 7th ACM Interna-
+tional Conference on Systems for Energy-Efficient Buildings, Cities,
+and Transportation , 170–179doi:10.1145/3408308.3427604. iSBN:
+9781450380614.
+[83] Vázquez-Canteli, J.J.R., Kämpf, J., Henze, G., Nagy, Z., 2019.
+CityLearn v1.0: An OpenAI gym environment for demand response
+withdeepreinforcementlearning. BuildSys2019-Proceedingsofthe
+6th ACM International Conference on Systems for Energy-Efficient
+Buildings, Cities, and Transportation , 356–357doi:10.1145/3360322.
+3360998. iSBN: 9781450370059.
+[84] Vázquez-Canteli, J.R., Dey, S., Henze, G., Nagy, Z., 2020. The
+CityLearn Challenge 2020, in: Proceedings of the 7th ACM In-
+ternational Conference on Systems for Energy-Efficient Buildings,
+Cities,andTransportation,ACM,NewYork,NY,USA.pp.320–321.
+URL: https://dl.acm.org/doi/10.1145/3408308.3431122,doi: 10.1145/
+3408308.3431122.
+[85] Vázquez-Canteli, J.R., Nagy, Z., 2019. Reinforcement learning for
+demand response: A review of algorithms and modeling techniques.
+Applied Energy 235, 1072–1089. URL:https://www.sciencedirect.
+com/science/article/pii/S0306261918317082,doi: 10.1016/j.apenergy.
+2018.11.002.
+[86] Wilson,E.J.,2017. ResStock-TargetingEnergyandCostSavingsfor
+U.S. Homes URL:https://www.osti.gov/biblio/1398250.
+[87] Wilson, E.J.H., Parker, A., Fontanini, A., Present, E., Reyna, J.L.,
+Adhikari, R., Bianchi, C., CaraDonna, C., Dahlhausen, M., Kim, J.,
+LeBar, A., Liu, L., Praprost, M., Zhang, L., DeWitt, P., Merket, N.,
+Speake, A., Hong, T., Li, H., Mims Frick, N., Wang, Z., Blair, A.,
+Horsey, H., Roberts, D., Trenbath, K., Adekanye, O., Bonnema, E.,
+El Kontar, R., Gonzalez, J., Horowitz, S., Jones, D., Muehleisen,
+R.T., Platthotam, S., Reynolds, M., Robertson, J., Sayers, K., Li,
+Q., 2022. End-Use Load Profiles for the U.S. Building Stock:
+Methodology and Results of Model Calibration, Validation, and Un-
+certainty Quantification URL:https://www.osti.gov/biblio/1854582,
+doi:10.2172/1854582.
+[88] Wu, A., Nweye, K., Nagy, Z., 2023. Heterogeneous Multi-Agent
+Reinforcement Learning for Grid-Interactive Communities, in: Pro-
+ceedings of the 10th ACM International Conference on Systems
+for Energy-Efficient Buildings, Cities, and Transportation, Associ-
+ation for Computing Machinery, New York, NY, USA. pp. 314–
+315. URL: https://doi.org/10.1145/3600100.3626276, doi:10.1145/
+3600100.3626276.
+[89] Wölfle, D., Vishwanath, A., Schmeck, H., 2020. A Guide for the
+Design of Benchmark Environments for Building Energy Optimiza-
+tion, in: Proceedings of the 7th ACM International Conference on
+Systems for Energy-Efficient Buildings, Cities, and Transportation,
+Association for Computing Machinery, New York, NY, USA. pp.
+220–229. URL: https://dl.acm.org/doi/10.1145/3408308.3427614,
+doi:10.1145/3408308.3427614.
+[90] Zanocco, C., Flora, J., Rajagopal, R., Boudet, H., 2021. When
+the lights go out: Californians’ experience with wildfire-related
+public safety power shutoffs increases intention to adopt so-
+lar and storage. Energy Research & Social Science 79,
+102183. URL: https://www.sciencedirect.com/science/article/pii/
+S2214629621002760, doi:10.1016/j.erss.2021.102183.
+[91] Zhan, S., Lei, Y., Chong, A., 2023. Comparing model predic-
+tive control and reinforcement learning for the optimal operation of
+building-PV-battery systems. E3S Web of Conferences 396, 04018.
+URL: https://www.e3s-conferences.org/articles/e3sconf/abs/2023/
+33/e3sconf_iaqvec2023_04018/e3sconf_iaqvec2023_04018.html,doi: 10.
+1051/e3sconf/202339604018. publisher: EDP Sciences.
+[92] Zhang, H., Wu, D., Boulet, B., 2022. MetaEMS: A Meta Re-
+inforcement Learning-based Control Framework for Building En-
+ergy Management System URL:https://arxiv.org/abs/2210.12590,
+doi:10.48550/ARXIV.2210.12590.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 17 of 24
+
+PDF PAGE 18
+CityLearn v2
+A. Appendix
+A.1. Distributed energy resources
+ThissectiondescribestheenergymodelsoftheDERsin
+CityLearntoincludetheheatpumpAppendixA.1.1,electric
+heater Appendix A.1.2, TES (Appendix A.1.3), BESS (Ap-
+pendix A.1.4), EV (Appendix A.1.5), and PV system (Ap-
+pendixA.1.6).AllDERsbutthePVsystemarecontrollable.
+A.1.1. Heat pump
+CityLearn uses an air-to-water heat pump model that is
+based on an ideal refrigeration cycle. Thus, the COP (Equa-
+tions (A.1) and (A.2)) at any given time step,𝑡, is a function
+of only outdoor air temperature, 𝑇out, and target supply
+temperatures for cooling and heating modes (𝑇cooling, supply,
+𝑇heating, supply), where the supply temperature is constant at
+alltimesteps.Theheatpumpcanbeusedineithercontrolor
+idealmode.Inthecontrolmode,theelectricityconsumption
+of the heat pump,𝐸HP, control
+𝑡 , is a function of the control
+action 𝑎HP
+𝑡−1 where 𝑎 ∈ [0 , 1] denotes the proportion of
+heat pump’s nominal power,𝑃HP, nominal, made available
+(Equation(A.3)).Thesuppliedcoolingorheatingenergyfor
+thecontrolledpoweristhendefinedbyEquation(A.4)asthe
+product of the COP, electricity consumption and technical
+efficiency,𝜂HP, technical.
+COPcooling
+𝑡 = 𝑇cooling, supply
+𝑇out
+𝑡 − 𝑇cooling, supply (A.1)
+COPheating
+𝑡 = 𝑇heating, supply
+𝑇heating, supply− 𝑇out
+𝑡
+(A.2)
+𝐸HP, control
+𝑡 = 𝑎HP
+𝑡−1 × 𝑃HP, nominal (A.3)
+𝑄HP, control
+𝑡 = 𝜂HP, technical×COPcooling | heating
+𝑡 ×𝐸HP, control
+𝑡
+(A.4)
+In the ideal mode, the supplied cooling or heating en-
+ergy is known apriori from BEPS software e.g. EnergyPlus
+[13], or real world measurements, and only the electricity
+consumption for the supplied energy needs to be calculated
+as defined in Equation (A.5).
+𝐸HP, ideal
+𝑡 =
+𝑄HP, ideal
+𝑡
+𝜂technical ×COPcooling | heating
+𝑡
+(A.5)
+A.1.2. Electric heater
+TheelectricheaterisdefinedbyEquations(A.6)to(A.8)
+where like the heat pump, can be used in control or ideal
+mode. Similarly, in the control mode, the electricity con-
+sumptionoftheelectricheaterisafunctionofthecontrolac-
+tion 𝑎EH
+𝑡−1 where 𝑎 ∈ [0, 1]denotestheproportionofheater’s
+nominal power, 𝑃EH, nominal, provided for heating (Equa-
+tion (A.6)). The supplied heating energy is the product of
+the heater’s technical efficiency,𝜂EH, technical, and controlled
+electricityconsumption, 𝐸EH, control
+𝑡 (Equation(A.7)).Inthe
+ideal case, 𝑄EH, ideal
+𝑡 is known and 𝐸EH, ideal
+𝑡 evaluated as
+Equation (A.8).
+𝐸EH, control
+𝑡 = 𝑎EH
+𝑡−1 × 𝑃EH, nominal (A.6)
+𝑄EH, control
+𝑡 = 𝜂EH, technical× 𝐸EH, control
+𝑡 (A.7)
+𝐸EH, ideal
+𝑡 =
+𝑄EH, ideal
+𝑡
+𝜂EH, technical (A.8)
+A.1.3. Thermal energy storage
+Thermal loads are shifted by storing (charging) and
+releasing (discharging) chilled or hot water energy in a
+TES. The stored energy at any time step,𝑄𝑡𝑒𝑠
+𝑡 , is a piece-
+wise function (Equation (A.9)) driven by the control action
+𝑎TES
+𝑡−1 , where 𝑎 ∈ [−1 , 1] prescribes the proportion of the
+TES capacity, 𝐶TES, to be charged (𝑎 > 0) or discharged
+(𝑎 < 0). The energy stored after charging is defined by
+Equation (A.10) as the minimum of the capacity and an
+expected energy. The expected energy is the sum of the
+initial energy after losses,𝑄TES
+𝑡−1 × (1 − 𝜃TES), where 𝜃TES
+is the thermal loss coefficient, and the product of the action,
+capacityandround-tripefficiency, 𝜂TES, round-trip.Theround-
+trip efficiency defined in Equation (A.11) is the square root
+of the technical efficiency,𝜂TES, technical.
+𝑄TES
+𝑡 =
+⎧
+⎪
+⎨
+⎪⎩
+𝐸𝑞𝑢𝑎𝑡𝑖𝑜𝑛 (A.10) if 𝑎TES
+𝑡−1 > 0.0
+𝐸𝑞𝑢𝑎𝑡𝑖𝑜𝑛 (A.12) if 𝑎TES
+𝑡−1 < 0.0
+0.0 otherwise
+(A.9)
+𝑄TES, +
+𝑡 = min
+(
+𝐶TES, 𝑄TES
+𝑡−1 ×
+(
+1 − 𝜃TES
+)
++ 𝑎TES
+𝑡−1 × 𝐶TES × 𝜂TES, round-trip
+)
+(A.10)
+𝜂TES, round-trip =
+√
+𝜂TES, technical (A.11)
+ThestoredenergyafterdischargingtheTESisdefinedin
+Equation (A.12) as the sum of the initial energy after losses
+and quotient of the energy equivalent of the control action
+(𝑎TES
+𝑡−1 × 𝐶TES) and the round-trip efficiency. A lower limit
+of0isimposedtosatisfytheenergybalanceinthecaseofa
+completely discharged TES.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 18 of 24
+
+PDF PAGE 19
+CityLearn v2
+𝑄TES, -
+𝑡 = max
+(
+0.0, 𝑄TES
+𝑡−1 ×
+(
+1 − 𝜃TES
+)
++ 𝑎TES
+𝑡−1 × 𝐶TES ÷ 𝜂TES, round-trip
+)
+(A.12)
+Consequently, the SoC (Equation (A.13))∈ [0 , 1] is the
+ratio of the stored energy calculated in Equation (A.9) and
+the capacity.
+SoCTES
+𝑡 =
+𝑄TES
+𝑡
+𝐶TES (A.13)
+Finally, the energy balance i.e., energy supplied to the
+TES by an electric device e.g., heat pump or electric heater
+beforeadjustmentforefficiencyorenergysuppliedfromthe
+TES to a building after adjustment for efficiency is defined
+by Equation (A.14).
+𝑄TES, balance
+𝑡 =
+(
+𝑄TES
+𝑡 − 𝑄TES
+𝑡−1 ×
+(
+1 − 𝜃TES
+))
+×
+⎧
+⎪
+⎨
+⎪⎩
+1 ÷ 𝜂TES, round-trip if 𝑎𝑡−1 > 0.0
+𝜂TES, round-trip if 𝑎𝑡−1 < 0.0
+0.0 otherwise
+(A.14)
+A.1.4. Battery energy storage system
+The BESS model builds up on the TES model but
+hasatime-dependentcapacity, 𝐶BESS,round-tripefficiency,
+𝜂BESS, round-trip,andmaximuminputaswellasoutputpower,
+𝑃BESS, max. The stored energy at any time step,𝑄𝑏𝑒𝑠𝑠
+𝑡 , is a
+piecewise function (Equation (A.15)) driven by the control
+action 𝑎BESS
+𝑡−1 , where 𝑎 ∈ [−1 , 1] prescribes the proportion
+of the maximum capacity (before degradation),𝐶BESS
+0 , to
+becharged( 𝑎 > 0)ordischarged( 𝑎 < 0).Thestoredenergy
+afterchargingisdefinedbyEquation(A.16)astheminimum
+of the degraded capacity,𝐶BESS
+𝑡 (Equation (A.21)), and an
+expected energy. The expected energy is the sum of the
+initialenergyafterlosses, 𝑄BESS
+𝑡−1 ×(1−𝜃BESS),andtheenergy
+to be added, where 𝜃BESS is the thermal loss coefficient.
+This added energy is the product of the power-dependent
+round-trip efficiency, 𝜂BESS, round-trip, and the minimum of
+two quantities: the energy equivalent of the control action
+(𝑎BESS
+𝑡−1 × 𝑃BESS, nominal) and the SoC-dependent maximum
+input and output power,𝑃BESS, max
+𝑡 .
+𝑄BESS
+𝑡 =
+⎧
+⎪
+⎨
+⎪⎩
+𝐸𝑞𝑢𝑎𝑡𝑖𝑜𝑛 (A.16) if 𝑎BESS
+𝑡−1 > 0.0
+𝐸𝑞𝑢𝑎𝑡𝑖𝑜𝑛 (A.17) if 𝑎BESS
+𝑡−1 < 0.0
+0.0 otherwise
+(A.15)
+𝑄BESS, +
+𝑡 = min
+(
+𝐶BESS
+𝑡 , 𝑄BESS
+𝑡−1 ×
+(
+1 − 𝜃BESS
+)
++min
+(
+𝑎BESS
+𝑡−1 × 𝐶BESS
+0 , 𝑃BESS
+𝑡
+)
+× 𝜂BESS, round-trip
+)
+(A.16)
+The stored energy after discharging the BESS is defined
+by Equation (A.17) as the sum of the initial energy after
+losses and quotient of the energy equivalent of the control
+action(afteradjustmentformaximumoutputpower, 𝑃BESS
+𝑡 )
+and the round-trip efficiency. The stored energy is limited
+to a depth-of-discharge (DoD) such that the BESS is never
+completely drained for DoD > 0. Equation (A.18) is the
+BESS SoC as a function of the stored energy and𝐶BESS
+0 .
+𝑄BESS, -
+𝑡 =
+min
+(
+𝐶BESS
+0 ×DoDBESS, 𝑄BESS
+𝑡−1 ×
+(
+1 − 𝜃BESS
+)
++min
+(
+𝑎BESS
+𝑡−1 × 𝐶BESS
+0 , −𝑃BESS
+𝑡
+)
+÷ 𝜂BESS, round-trip
+)
+(A.17)
+SoCBESS
+𝑡 =
+𝑄BESS
+𝑡
+𝐶BESS
+0
+(A.18)
+The energy balance, Equation (A.19), is same as that
+of the TES except that the round-trip efficiency is time-
+dependent. The energy balance is also the electricity con-
+sumed when charging or avoided consumption when dis-
+charging (Equation (A.20)).
+𝑄BESS, balance
+𝑡 =
+(
+𝑄BESS
+𝑡 − 𝑄BESS
+𝑡−1 ×
+(
+1 − 𝜃BESS
+))
+×
+⎧
+⎪
+⎨
+⎪⎩
+1 ÷ 𝜂BESS, round-trip
+𝑡 if 𝑎BESS
+𝑡−1 > 0.0
+𝜂BESS, round-trip
+𝑡 if 𝑎BESS
+𝑡−1 < 0.0
+0.0 otherwise
+(A.19)
+𝐸BESS
+𝑡 = 𝑄BESS, balance
+𝑡 (A.20)
+The time-dependency of the capacity is as a result of
+degradation from charging and discharging cycles. It is
+defined in Equation (A.21) as the difference between the
+capacity at the previous time step, and the the loss quantity.
+Thisquantityisafunctionofthecapacitylosscoefficient, 𝜙,
+maximum capacity, energy balance at the current time step,
+and capacity at the previous time step.
+𝐶BESS
+𝑡 = 𝐶BESS
+𝑡−1 −
+𝜙 × 𝐶BESS
+0 × |||𝑄BESS, balance
+𝑡
+|||
+2 × 𝐶BESS
+𝑡−1
+(A.21)
+The BESS round-trip efficiency,𝜂BESS, round-trip
+𝑡 , (Equa-
+tion (A.22)) is similar to that of the TES but with the
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 19 of 24
+
+PDF PAGE 20
+CityLearn v2
+0.0 0.2 0.4 0.6 0.8 1.0
+min(PBESS, max
+t ,
+|aBESS
+t × CBESS
+t |)
+÷PBESS, nominal
+0.7
+0.8
+BESS, technical
+t
+(a) Technical efficiency as a
+function of controlled propor-
+tion of nominal power (Equa-
+tion (A.23)).
+0.0 0.2 0.4 0.6 0.8 1.0
+SoCBESS
+t 1
+0.00
+0.25
+0.50
+0.75
+1.00
+PBESS
+t  
+÷PBESS, nominal
+(b) Proportion of nominal
+power used to define the
+maximum input and output
+power as a function of SoC
+(Equation (A.24)).
+Figure A.1: Example curves defining BESS technical efficiency,
+𝜂BESS, technical
+𝑡 , and maximum input and output power,𝑃BESS, max
+𝑡 .
+technicalefficiency, 𝜂BESS, technical
+𝑡 ,asafunctionofapower-
+efficiency curve (Equation (A.23)), where for a given con-
+trolledproportionofthenominalpower, 𝑃BESS, nominal,there
+is a limitation on the battery’s efficiency. An example of
+this function from [43] is shown in Figure A.1a for a BESS
+subjected to continuous charge and discharge cycles.
+𝜂BESS, round-trip
+𝑡 =
+√
+𝜂BESS, technical
+𝑡 (A.22)
+𝜂BESS, technical
+𝑡 =
+𝑓
+(
+𝑎BESS
+𝑡 , 𝐶BESS
+0 , 𝑃BESS, max
+𝑡 , 𝑃BESS, nominal
+)
+(A.23)
+Equation (A.24) defines the maximum input and output
+power 𝑃BESS, max
+𝑡 as the product of the nominal power,
+𝑃BESS, nominal, and SoC-power curve. The curve’s depen-
+dent variable is the proportion of available nominal power,
+𝑃BESS, nominal, at any SoC, SoCBESS
+𝑡−1 value.
+𝑃BESS, max
+𝑡 = 𝑃BESS, nominal× 𝑓
+(
+SoCBESS
+𝑡−1
+)
+(A.24)
+Figure A.1b shows an example of an SoC-dependent
+power curve from [81] where the BESS charges faster and
+close to the nominal power for lower SoC (SoC𝑡−1 ≤ 0.6),
+while the charge rate decreases to zero at higher SoC. This
+isconsistentwiththechargingbehaviourofaBESSwhereit
+takes longer to charge per unit SoC after exceeding an SoC
+threshold of≈ 0.8 [42].
+A.1.5. Electric vehicle
+TheenergymanagementofEVsisdesignedtoallowthe
+simulationofthreedistinctmodes:(1)V2G;(2)G2V;(3)no
+control (i.e., where EVs act as a load without any possible
+controlovertheircharging).Forthatpurpose,thesimulation
+has three fundamental parts: the Electric Vehicle Chargers
+(EVCs), which serve as a connection between a building
+and an EV, the model of EV itself, which acts as DER,
+andaninputschedule,whichdictatestheplugin/outenergy
+flexibility routine for each EV and introduces formulation
+for energy flexibility and simulation modes. For a detailed
+explanation of the EV modes and simulation please refer to
+ANONYMOUS.
+Electric vehicle charger:The EVC serves as an inter-
+face between the buildings in the simulation environment
+andtheEVs,andisthecomponentwherecontrolisapplied.
+Just like a house, an office or any building can have
+multipleinstalledchargersintherealworld,asinglebuilding
+inthesimulationcanhavemorethanonechargersimulated.
+EachchargerisassignedauniqueidentifierEVC 𝑏_𝑛_𝑝(where
+EVC stands for Electric Vehicle Charger, b stands for the
+Building where the charger is inserted in the simulation, n
+for the charger Number within the building and p stands as
+the number of the Plug of that charger). This facilitates the
+appropriate linkage between the EVC and the EVs during
+the simulation.
+The model supports the specification of distinct power
+output levels for charging and discharging modes. When
+an EV is plugged in, the electricity consumption of the
+electricvehiclecharger 𝐸
+EVC𝑏_𝑛_𝑝
+𝑡 isafunctionofthecontrol
+action 𝑎
+EVC𝑏_𝑛_𝑝
+𝑡−1 where 𝑎 ∈ [−1 , 1] for V2G 𝑎 ∈ [0 , 1] for
+G2V and No-Control modes. It denotes the proportion of
+charger’s nominal power for charging𝑃EVC, nominal, charging
+when if 𝑎
+EVC𝑏_𝑛_𝑝
+𝑡−1 ≥ 0 and the proportion of charger’s
+nominal power for discharging𝑃EVC, nominal, dischargingwhen
+if 𝑎
+EVC𝑏_𝑛_𝑝
+𝑡−1 < 0 (Equation (A.25)). The supplied charging
+energy from the charger to the connected EV battery, for a
+controlled input power is then defined by Equation (A.26)
+as the product of the electricity consumption𝐸
+EVC𝑏_𝑛_𝑝
+𝑡 and
+technical efficiency𝜂EVC, technical.
+𝐸
+EVC𝑏_𝑛_𝑝
+𝑡 = 𝑎
+EVC𝑏_𝑛_𝑝
+𝑡−1
+× 𝑃EVC𝑏_𝑛_𝑝,nominal, charging | discharging (A.25)
+𝑄
+EVC𝑏_𝑛_𝑝
+𝑡 = 𝜂EVC𝑏_𝑛_𝑝,technical × 𝐸
+EVC𝑏_𝑛_𝑝
+𝑡 (A.26)
+Electric vehicle: The EV model replicates the real-
+worldoperationalattributesandpracticalconstraintsofEVs
+within a simulation environment, specifically, those acting
+as DER within the system, e.g., participating in one of the
+defined modes. EVs in the simulation can be connected
+to an EVC (Appendix A.1.5) and consume energy (in all
+modes) and discharge back to the grid (in V2G mode). EVs
+will connect and disconnect from the chargers as per the
+modes pre-simulated file described at Appendix A.1.5. The
+EV uses the same battery model as the stationary BESS
+(Appendix A.1.4).
+Modes: In the simulation modes for EV energy man-
+agement, we establish that the control over EV charging is
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 20 of 24
+
+PDF PAGE 21
+CityLearn v2
+exercised exclusively when the vehicles are plugged into
+a building’s EVC. Specifically, energy management algo-
+rithms, referred to as agents, regulate the power of the
+chargers, which in turn charges/discharges the connected
+EVs.Itisimportanttonotethattheseagentswillnothavean
+influenceontheroutinewhenanEVarrivesorleaves;these
+eventsaredictatedbythereal-lifeschedulesandhabitsofthe
+vehicle owners, which are pre-simulated for CityLearnV2.
+To simulate this mode, the concept of energy flexibility
+is utilized, adapted from the standardized FlexOffer (FO)
+model in [66].
+A.1.6. Photovoltaic system
+The PV model makes use of pre-simulated inverter out-
+put power per unit of installed PV capacity, reported as a
+time series, 𝑃I
+𝑡. For PV generation estimates, the System
+Advisory Model (SAM) [6] is used to generate location
+specificdata.ThePVgenerationisthusthenegativeproduct
+of a user-defined nominal power,𝑃PV, nominaland 𝑃I
+𝑡 (Equa-
+tion (A.27)).
+𝐸PV
+𝑡 = −𝑃PV, nominal× 𝑃I
+𝑡 (A.27)
+A.2. Thermal dynamics model
+A.2.1. Fitting data generation
+To generate the LSTM fitting data, we first build an
+EnergyPlus model of the building or source a representa-
+tive model from open-source datasets like [87]. The energy
+model is paired with a weather file for the desired building
+location and simulated multiple times to obtain building
+ideal cooling and heating loads as well as the effect sup-
+plying thermal energy below or above the ideal loads has
+on the indoor dry-bulb temperature. The first simulation
+(energyplus.simulation.1) uses the as-provided mechanical
+HVAC system in the energy model as a reference point for
+subsequent simulations.
+A second simulation (energyplus.simulation.2) where
+themechanicalHVACsystemisreplacedwitha HVACTem-
+plate:Zone:IdealLoadsAirSystem EnergyPlus object which
+is an artificial HVAC system that completely supplies cool-
+ing or heating air to a building in sufficient quantity and
+100%efficiencytomeetthebuildingloadinfull(idealload).
+We run the ideal load simulation to determine the ideal
+cooling and heating loads that satisfy the indoor dry-bulb
+temperature setpoint, and the result from this simulation is
+validated against that ofenergyplus.simulation.1. The vali-
+dation ensures that the as-provided building energy model
+integrity is not tampered with when replacing mechanical
+systems with ideal load system. Our check for integrity is
+that for the ideal load case, cooling and heating energy
+delivered to the building is equal or slightly less than that
+for the mechanical case. Indoor dry-bulb temperature in the
+buildingusingtheidealloadsystemshouldbesimilartothat
+from using the mechanical system.
+The remaining simulations make up the LSTM train-
+ing dataset where we replace the ideal load system with
+an OtherEquipment EnergyPlus object which is a generic
+internal heat gain and loss equipment to simulate under-
+cooling, under-heating, over-cooling and overheating with
+respect to the building’s ideal loads. The first of these sim-
+ulations (energyplus.simulation.3) supplies the ideal load
+from energyplus.simulation.2tovalidatetheoperationofthe
+genericequipmentcomparedtotheidealloadsystem,asthe
+effectontemperatureshouldcloselymatch.Thenextsimula-
+tion( energyplus.simulation.4)free-floatsthetemperatureby
+supplyingneithercoolingnorheatingenergytothebuilding
+while the remaining simulations (energyplus.simulation.5-
+n) have the ideal load varied using the inequality,𝐴 ⋅ 𝐼𝑡 ≤
+𝐼𝑡 ≤ 𝐵 ⋅ 𝐼𝑡 with a probability,𝑝𝐿𝑡≠𝐼𝑡, that the ideal load is
+not used. 𝐴 and 𝐵 are coefficients that define the variation
+range where𝑝𝐿𝑡≠𝐼𝑡 = 0 .6, 𝐴 = 0 .3 and 𝐵 = 1 .7 have been
+used in practice [14].
+Finally, we query the results of the generic internal
+heat gain/loss equipment simulations to extract features that
+make up the LSTM fitting data, including the following
+variables: direct and diffuse solar irradiance, outdoor dry-
+bulbtemperature,occupantcount,coolingandheatingloads,
+month, day-of-week, hour, and indoor dry-bulb temperature
+(target variable). Note that while we use EnergyPlus for
+our simulations, these data can be generated with any other
+BEPS software.
+A.2.2. Training and testing
+We split the generated data into training, validation
+and testing sets. The method of splitting ensure that each
+of the simulations with referenceenergyplus.simulation.3-
+n are equally represented in each set. The sliding window
+method is used in training where we partition the training
+data into sequences of𝑙 time steps. 𝑙 = 12 has been used
+in practice [68]. Each sequence represents a window of
+independent features. Each sequence is then paired with its
+correspondingtarget,forminginput-outputpairs.Bysliding
+the window along the time axis, multiple input-output pairs
+are generated, covering the entirety of the training data.
+Through this iterative process, the LSTM model learns to
+predicttheindoordry-bulbtemperatureatagiventimestep,
+𝑡, leveraging the lagged input sequence leading up to the
+previous 𝑡−𝑙timesteps.Thisenablesthemodeltoeffectively
+capture temporal dynamics based on past observations.
+Wetestthemodelinaclosedloop,wherebythemodel’s
+predictionsareusedasinputforsubsequentpredictions.The
+model’s performance is evaluated on its minimization of its
+rootmeansquareerror(RMSE)(Equation(A.28))andmean
+absolutepercentageerror(MAPE)(Equation(A.29))where
+𝑛 is the number of time steps in the testing period,𝑇in
+𝑡 is
+the true temperature at time step𝑡 and ̂𝑇in
+𝑡 is the predicted
+temperature.
+RMSE =
+√√√√√
+∑𝑛−1
+𝑡=0
+(
+𝑇in
+𝑡 − ̂𝑇in
+𝑡
+)2
+𝑛 (A.28)
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 21 of 24
+
+PDF PAGE 22
+CityLearn v2
+MAPE = 1
+𝑛 ×
+𝑛−1∑
+𝑡=0
+|||||
+𝑇in
+𝑡 − ̂𝑇in
+𝑡
+𝑇in
+𝑡
+|||||
+(A.29)
+A.3. Observation space
+Thereareover50observablecontinuousstatesinCityLearn
+as summarized in Table A.1 and categorized as one of the
+following:calendar,weather,environmental,cost,load,con-
+sumption,flexibility,efficiency,comfort,occupancy,andre-
+silienceobservations.Theweatherandcostobservationsin-
+clude6,12,and24hourforecaststhatcaninformfutureself-
+generationcapability,loadsandelectricdeviceefficiency.In
+ideal load control, the load and consumption observations
+inform the building loads and the energy used to satisfy the
+loads whereas in a controlled load scenario, where the load
+observationsarecalculated,theloadandconsumptionobser-
+vationsinformtheimpactoftheagent(s)controlaction(s)on
+energy use. Given that simultaneous cooling and heating is
+notpossibleinabuilding,the hvac_modeisusedtodetermine
+whichofthesetwothermalmodesabuildingisoperatingin
+at any given time step. The thermal loads can also be unmet
+and the indoor dry-bulb temperature allowed to free-float
+when hvac_mode=off. The flexibility observations provide
+the control agent with the building’s capacity for upward
+or downward energy flexibility. There are as many EV-
+relatedobservationsasthereareEVschargersinabuilding.
+The efficiency observations are the COP of the cooling,
+heating and DHW devices when they are heat pump type
+otherwise,itistheirtechnicalefficiencye.g.,electricheater.
+The comfort observations provide information on occupant
+thermal and humidity comfort as well as occupant thermo-
+stat interaction. occupant_count specifies if the building is
+occupiedornotandthenumberofpeopleduringoccupancy.
+The power_outage observation is the power outage signal
+discussed in Section 2.2.
+Observations are (1) either shared i.e., equal value in
+all buildings or building specific, (2) either control action
+dependent or control agnostic, and (3) either statically de-
+fined in a time series file or calculated during runtime. The
+inclusion of an observation in a control problem’s observa-
+tion space is dependent on the control problem formulation
+including the controlled DERs and control objective and is
+customizable by the user.
+A.4. Action space
+Table A.2 summarizes the continuous action space
+where there are five ESS-related actions controlling the
+proportion of storage capacity to be charged or discharged
+and two HVAC electric device actions controlling the pro-
+portion of nominal power to be supplied. There are as many
+electric_vehicle_storage actions as there are EVs chargers
+in a building. Depending on the control problem and the
+DERs in a building, some actions may be excluded in the
+action space.
+A.5. Reward functions
+Table A.3 summarizes four reward functions defined
+in CityLearn for RLC although, other user-defined reward
+functions are possible depending on the control problem
+formulation.Equations(A.31)to(A.34)definethesereward
+functions at the building-level,𝑟building
+𝑡 , and for centralized
+controlarchitecture,thedistrictreward, 𝑟district
+𝑡 ,isthesumof
+the building-level rewards (Equation (A.30)).
+TherewardfunctionguidesthelearningprocessinRLC
+and is akin to the objective in MPC.
+𝑟district
+𝑡 =
+𝑏−1∑
+𝑖=0
+𝑟building 𝑖
+𝑡 (A.30)
+A.6. Control algorithms
+Table A.4 summarizes the control agent algorithms that
+are defined in CityLearn as well as supported standard-
+ized RLC algorithm libraries. The Baseline agent is used
+to establish a BAU scenario without DERs control while
+the Random agent takes arbitrary actions. All RBC agents
+in CityLearn are descendants of the Hour-RBC agent that
+prescribesactionswithrespecttothehour-of-day.CityLearn
+provides three main types of model-free RLC agents: Tab-
+ular Q-Learning [73] for discretized observation and action
+spaces, SAC [31] and MARLISA [82] for continuous ob-
+servation and action spaces. The SAC algorithm is adapted
+for either single-agent or independent multi-agent configu-
+rations while the MARLISA algorithm is for purely multi-
+agent configurations with the ability to share information
+amongst agents. SAC-RBC and MARLISA-RBC are sub-
+types of the SAC and MARLISA algorithms that make use
+ofanHour-RBCforofflinetrainingtoimprovetheirlearning
+[57]. For a wider range of algorithm options, we provide
+wrappers for interfacing with algorithms implemented in
+Stable-Baselines3 [72] and RLlib [47] libraries.
+Examples of how to use these control algorithms are
+provided in our web documentation2
+A.7. Key performance indicators
+Equation(A.35)isathermalcomfortKPIthatquantifies
+the proportion of total simulation time steps,𝑛, where the
+differencebetweenabuilding’sindoordry-bulbtemperature,
+𝑇in
+𝑡 , and set point,𝑇spt
+𝑡 , falls outside a comfort band,𝑇 Δ.
+Equations (A.36) and (A.37) are similar to Equation (A.35)
+butconsiderwhenthedifferenceiseitherbeloworabove 𝑇 Δ.
+Equations (A.38) to (A.43) report the descriptive statistics
+of 𝑇in
+𝑡 − 𝑇spt
+𝑡 for either cold discomfort (𝑇in
+𝑡 < 𝑇 spt
+𝑡 ) or hot
+discomfort (𝑇in
+𝑡 > 𝑇 spt
+𝑡 ) at the building level.
+TheenergyKPIsaredefinedinEquations(A.44)to(A.49)
+where Equation (A.44) defines a building’s total electric-
+ity consumption, max
+(
+𝐸building, net
+𝑡 , 0
+)
+, from the grid (net
+import) whereas Equation (A.45) is a building’s total net
+electricity consumption, 𝐸building, net
+𝑡 , (sum of import and
+2ANONYMOUS
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 22 of 24
+
+PDF PAGE 23
+CityLearn v2
+Table A.1
+Observation space.
+Name Unit Shared Control-dependent Source
+Calendar
+month - ✓ building_id.csv
+day_type - ✓ building_id.csv
+hour - ✓ building_id.csv
+daylight_savings_status true/false ✓ building_id.csv
+Weather
+outdoor_dry_bulb_temperature𝑡 + (0, 6, 12, 24) ◦C ✓ weather.csv
+outdoor_relative_humidity𝑡 + (0, 6, 12, 24) % ✓ weather.csv
+diffuse_solar_irradiance𝑡 + (0, 6, 12, 24) W/m2 ✓ weather.csv
+direct_solar_irradiance𝑡 + (0, 6, 12, 24) W/m2 ✓ weather.csv
+Environmental
+carbon_intensity kgCO2e/kWh ✓ carbon_intensity.csv
+Cost
+electricity_pricing𝑡 + (0, 6, 12, 24) $/kWh pricing.csv
+Load
+cooling_demand kWh ✓ building_id.csv/calculated
+heating_demand kWh ✓ building_id.csv/calculated
+dhw_demand kWh building_id.csv
+Consumption
+cooling_electricity_consumption kWh ✓ calculated
+heating_electricity_consumption kWh ✓ calculated
+dhw_electricity_consumption kWh ✓ calculated
+electrical_storage_electricity_consumption kWh ✓ calculated
+non_shiftable_load kWh building_id.csv
+net_electricity_consumption kWh ✓ calculated
+hvac_mode cooling/heating/off building_id.csv
+Flexibility
+cooling_storage_soc - ✓ calculated
+heating_storage_soc - ✓ calculated
+dhw_storage_soc - ✓ calculated
+electrical_storage_soc - ✓ calculated
+electrical_vehicle_soc - ✓ calculated
+electrical_vehicle_estimated_arrival_soc - electric_vehicle_id.csv
+electrical_vehicle_required_departure_soc - electric_vehicle_id.csv
+electrical_vehicle_estimated_arrival_time - electric_vehicle_id.csv
+electrical_vehicle_estimated_departure_time - electric_vehicle_id.csv
+electrical_vehicle_charger_state - electric_vehicle_id.csv
+solar_generation kWh calculated
+Efficiency
+cooling_device_efficiency - calculated
+heating_device_efficiency - calculated
+dhw_device_efficiency - calculated
+Comfort
+indoor_dry_bulb_temperature ◦C ✓ building_id.csv/calculated
+indoor_dry_bulb_temperature_set_point ◦C ✓ building_id.csv/calculated
+indoor_dry_bulb_temperature_delta ◦C ✓ calculated
+indoor_dry_bulb_temperature_set_point_override_delta ◦C ✓ calculated
+indoor_relative_humidity % building_id.csv
+Occupancy
+occupant_count people building_id.csv
+Resilience
+power_outage true/false building_id.csv/calculated
+export). Equation (A.46) is a district leve KPI quantifying
+an entire district’s average daily peak net electricity con-
+sumption, 𝐸district, net, where ℎ is the hours per day, and𝑑
+is the number of days. The peak district net electricity con-
+sumption at any time step is quantified by Equation (A.47).
+Ramping is defined in Equation (A.48) as the positive
+differencein 𝐸district, netbetweentwoconsecutivetimesteps.
+It a district level KPI that quantifies the smoothness of
+the district electricity consumption during the up-ramp that
+typically happens in the early evening when renewable
+power generation depletes and fossil-fueled power plants
+come online. Equation (A.49) is also a district level KPI
+that evaluates the average ratio of daily average and peak
+net electricity consumption, termed, load factor. The load
+factor is the efficiency of electricity consumption and is
+bound between 0 (highly inefficient) and 1 (highly efficient)
+thus, the goal is to maximize the load factor or minimize
+1 − load factor. These district-level energy KPIs are eval-
+uated at the building level by substituting𝐸district, net
+𝑡 with
+𝐸building, net
+𝑡 in their equations.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 23 of 24
+
+PDF PAGE 24
+CityLearn v2
+Table A.2
+Action space.
+Name 𝑎𝑡 range Description
+Energy storage system
+cooling_storage [-1, 1] Proportion of cooling_storage capacity to be charged (𝑎𝑡 > 0) or discharged (𝑎𝑡 < 0).
+heating_storage [-1, 1] Proportion of heating_storage capacity to be charged (𝑎𝑡 > 0) or discharged (𝑎𝑡 < 0).
+dhw_storage [-1, 1] Proportion of dhw_storage capacity to be charged (𝑎𝑡 > 0) or discharged (𝑎𝑡 < 0).
+electrical_storage [-1, 1] Proportion of electrical_storage capacity to be charged (𝑎𝑡 > 0) or discharged (𝑎𝑡 < 0).
+electric_vehicle_storage [-1, 1] Proportion of electric_vehicle_storage capacity to be charged (𝑎𝑡 > 0) or discharged (𝑎𝑡 < 0).
+Electric device
+cooling_device [0, 1] Proportion of cooling_device nominal power to be supplied.
+heating_device [0, 1] Proportion of heating_device nominal power to be supplied.
+Equation (A.50) and Equation (A.51) evaluate the cost
+and CO2e emissions from net import at the building level
+usingtime-dependentelectricityrate, 𝑅𝑡,andemissionsrate,
+𝐺𝑡.
+Equations(A.52)and(A.53)evaluatetheresiliencepro-
+videdbyacontrolalgorithmduringpoweroutagesi.e., 𝑂𝑡 >
+0, from thermal comfort and energy perspectives. Thermal
+resilience(Equation(A.52))issimilartoEquation(A.35)but
+isevaluatedonlyduringpoweroutageevents.Totalunserved
+energy (Equation (A.53)) quantifies the difference between
+the energy needed to satisfy building loads and the actual
+energy supplied to the building by the electric devices and
+ESSs.
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 24 of 24
+
+PDF PAGE 25
+CityLearn v2
+Table A.3
+Reinforcement learning reward functions in CityLearn.
+Name Description 𝑟building
+𝑡
+Electricity consumption Encourages reduced consumption from the grid
+and does not reward nor penalize net export i.e.,
+(𝐸building, net
+𝑡 < 0). Exponent, 𝑎, used to impose
+greater penalty for𝐸building, net
+𝑡 >> 0.
+−max
+(
+𝐸building, net
+𝑡 , 0
+)𝑎
+(A.31)
+MARL Multi-agent reward used to share information
+between the agents and rewards them for re-
+ducing the district net electricity consumption,
+𝐸district, net
+𝑡 [82]. For a building, the value is (1)
+negative if the building is consuming electricity
+from the grid (𝐸building, net
+𝑡 > 0) while the dis-
+trict is also consuming electricity from the grid
+(𝐸district, net
+𝑡 > 0), (2) positive when the build-
+ing generates more electricity than it consumes
+(𝐸building, net
+𝑡 < 0)thoughthedistrictisconsuming
+electricity from the main grid (𝐸district, net
+𝑡 > 0),
+since the building is contributing to making
+the district self-sufficient. If the district is self-
+sufficient i.e., 𝐸district, net
+𝑡 < 0, the reward is 0.
+0.01 ×
+(
+𝐸building, net
+𝑡
+2)
+× max
+(
+𝐸district, net
+𝑡 , 0
+)
+×
+{
+1 if 𝐸building, net
+𝑡 < 0
+−1 otherwise
+(A.32)
+Solar penalty Encourages net-zero energy use by penalizing
+load satisfaction from the grid when there is
+stored energy in ESSs as well as penalizing net
+export when ESSs are not fully charged [56].
+There is neither penalty nor reward when ESSs
+are fully charged during net export. Whereas,
+when ESSs are charged to capacity and there
+is net import the penalty is maximized.
+∑𝑛
+𝑖=0 −
+((
+1 +
+𝐸building, net
+𝑡
+|||𝐸building, net
+𝑡
+|||
+× ESSi, SoC
+𝑡
+)
+×
+|||𝐸building, net
+𝑡
+|||
+)
+(A.33)
+Comfort Negative difference between indoor dry-bulb
+temperature, 𝑇in
+𝑡 , and setpoint, 𝑇spt
+𝑡 , raised to
+some exponent,𝑎|𝑏, (𝑎 ≤ 𝑏) if outside the comfort
+band, 𝑇 Δ [68]. If within the comfort band, the
+reward is the negative difference when in cooling
+mode and temperature is below the setpoint
+or when in heating mode and temperature is
+above the setpoint. The reward is 0 if within the
+comfort band and above the setpoint in cooling
+mode or below the setpoint and in heating mode.
+The exponents teach the control agent to take
+actions that use the least energy while keeping
+𝑇in
+𝑡 close to 𝑇spt
+𝑡 .
+⎧
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎨
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪
+⎪⎩
+− |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+|||
+𝑏
+if 𝑇in
+𝑡 <
+(
+𝑇spt
+𝑡 − 𝑇 Δ
+)
+& hvac_mode = cooling
+− |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+|||
+𝑎
+if 𝑇in
+𝑡 <
+(
+𝑇spt
+𝑡 − 𝑇 Δ
+)
+& hvac_mode = heating
+− |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+||| if
+(
+𝑇spt
+𝑡 − 𝑇 Δ
+)
+≤ 𝑇in
+𝑡 < 𝑇 spt
+𝑡
+& hvac_mode = cooling
+0 if
+(
+𝑇spt
+𝑡 − 𝑇 Δ
+)
+≤ 𝑇in
+𝑡 < 𝑇 spt
+𝑡
+& hvac_mode = heating
+0 if 𝑇spt
+𝑡 ≤ 𝑇in
+𝑡 ≤
+(
+𝑇spt
+𝑡 + 𝑇 Δ
+)
+& hvac_mode = cooling
+− |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+||| if 𝑇spt
+𝑡 ≤ 𝑇in
+𝑡 ≤
+(
+𝑇spt
+𝑡 + 𝑇 Δ
+)
+& hvac_mode = heating
+− |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+|||
+𝑎
+if
+(
+𝑇spt
+𝑡 + 𝑇 Δ
+)
+< 𝑇 in
+𝑡
+& hvac_mode = cooling
+− |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+|||
+𝑏
+otherwise
+(A.34)
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 25 of 24
+
+PDF PAGE 26
+CityLearn v2
+Table A.4
+Control agents in CityLearn and supported third-party standardized control algorithm libraries.
+Name Theory Configuration DescriptionSingle-agent Independent Coordinated
+CityLearn
+Baseline - ✓ ✓ BAU scenario where neither ESSs nor elec-
+tric devices are controlled and ideal loads
+are satisfied.
+Random - ✓ ✓ Arbitrarily selected actions.
+Hour-RBC RBC ✓ ✓ Prescribes control actions based on custom
+hour-of-use values.
+Tabular Q-Learning RLC ✓ ✓ Model-free RLC algorithm for low-
+dimensional discrete observation and action
+spaces [73].
+SAC RLC ✓ ✓ Implementation of the model-free SAC al-
+gorithm [31].
+MARLISA RLC ✓ ✓ SACextensionwithsharedrewardandinter-
+nal building model to predict district elec-
+tricity consumption for cooperative control
+[82].
+SAC-RBC RBC, RLC ✓ ✓ SAC paired with an Hour-RBC for offline
+training or initial exploration [57].
+MARLISA-RBC RBC, RLC ✓ ✓ MARLISA paired with an Hour-RBC for
+offline training or initial exploration.
+Third-party
+Stable-Baselines3 wrapper RLC ✓ Interface for Stable-Baselines3 single-agent
+algorithms [72].
+RLlib wrapper RLC ✓ ✓ ✓ Interface for RLlib single-agent and multi-
+agent algorithms [47].
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 26 of 24
+
+PDF PAGE 27
+CityLearn v2
+Table A.5
+Summary of post-simulation KPIs in CityLearn.
+Name
+Spatial resolution
+Equation
+Building District
+Thermal comfort
+Discomfort time steps ✓ 1
+𝑛 × ∑𝑛−1
+𝑡=0
+{
+1 if |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+||| > 𝑇 Δ
+0 otherwise
+(A.35)
+Cold discomfort time steps ✓ 1
+𝑛 × ∑𝑛−1
+𝑡=0
+{
+1 if 𝑇in
+𝑡 − 𝑇spt
+𝑡 < −𝑇 Δ
+0 otherwise (A.36)
+Hot discomfort time steps ✓ 1
+𝑛 × ∑𝑛−1
+𝑡=0
+{
+1 if 𝑇in
+𝑡 − 𝑇spt
+𝑡 > 𝑇 Δ
+0 otherwise (A.37)
+Minimum cold discomfort ✓ min
+(||||
+min
+(
+0, 𝑇in
+0 − 𝑇spt
+0
+)||||
+, … , ||||
+min
+(
+0, 𝑇in
+𝑛−1 − 𝑇spt
+𝑛−1
+)||||
+)
+(A.38)
+Maximum cold discomfort ✓ max
+(||||
+min
+(
+0, 𝑇in
+0 − 𝑇spt
+0
+)||||
+, … , ||||
+min
+(
+0, 𝑇in
+𝑛−1 − 𝑇spt
+𝑛−1
+)||||
+)
+(A.39)
+Average cold discomfort ✓ 1
+𝑛 × ∑𝑛−1
+𝑡=0
+||||
+min
+(
+0, 𝑇in
+𝑡 − 𝑇spt
+𝑡
+)||||
+(A.40)
+Minimum hot discomfort ✓ min
+(
+max
+(
+0, 𝑇in
+0 − 𝑇spt
+0
+)
+, … ,max
+(
+0, 𝑇in
+𝑛−1 − 𝑇spt
+𝑛−1
+) )
+(A.41)
+Maximum hot discomfort ✓ max
+(
+max
+(
+0, 𝑇in
+0 − 𝑇spt
+0
+)
+, … ,max
+(
+0, 𝑇in
+𝑛−1 − 𝑇spt
+𝑛−1
+) )
+(A.42)
+Average hot discomfort ✓ 1
+𝑛 × ∑𝑛−1
+𝑡=0 max
+(
+0, 𝑇in
+𝑡 − 𝑇spt
+𝑡
+)
+(A.43)
+Energy
+Total electricity consumption ✓ ∑𝑛−1
+𝑡=0 max
+(
+𝐸building, net
+𝑡 , 0
+)
+(A.44)
+Total net electricity consumption ✓ ∑𝑛−1
+𝑡=0 𝐸building, net
+𝑡 (A.45)
+Average daily peak ✓ ℎ
+𝑛 × ∑𝑛÷ℎ−1
+𝑑=0 max
+(
+𝐸district, net
+𝑑⋅ℎ , … , 𝐸district, net
+𝑑⋅ℎ+ℎ−1
+)
+(A.46)
+All-time peak ✓ max
+(
+𝐸district, net
+0 , … , 𝐸district, net
+𝑛
+)
+(A.47)
+Total ramping ✓ ∑𝑛−1
+𝑡=1 max
+(
+0, 𝐸district, net
+𝑡 − 𝐸district, net
+𝑡−1
+)
+(A.48)
+Average (1 - load factor) ✓ ℎ
+𝑛 × ∑𝑛÷ℎ
+𝑑=0 1 −
+(∑𝑑⋅ℎ+ℎ−1
+𝑡=𝑑⋅ℎ 𝐸district, net
+𝑡
+)
+÷ℎ
+max
+(
+𝐸district, net
+𝑑⋅ℎ ,…,𝐸district, net
+𝑑⋅ℎ+ℎ−1
+) (A.49)
+Cost
+Total energy cost ✓ ∑𝑛−1
+𝑡=0 max
+(
+𝐸building, net
+𝑡 , 0
+)
+× 𝑅𝑡 (A.50)
+Environmental
+Total CO2e emissions ✓ ∑𝑛−1
+𝑡=0 max
+(
+𝐸building, net
+𝑡 , 0
+)
+× 𝐺𝑡 (A.51)
+Resiliency and thermal comfort
+1 - thermal resilience ✓ 1
+𝑛power outage × ∑𝑛−1
+𝑡=0
+{
+1 if |||𝑇in
+𝑡 − 𝑇spt
+𝑡
+||| > 𝑇 Δ & 𝑂𝑡 > 0
+0 otherwise
+(A.52)
+Resiliency and energy
+Total unserved energy ✓
+⎧
+⎪
+⎪
+⎪
+⎪
+⎨
+⎪
+⎪
+⎪
+⎪⎩
+(
+𝑄cooling_demand
+𝑡 + 𝑄heating_demand
+𝑡 + 𝑄dhw_demand
+𝑡 + 𝑄non_shiftable_load
+𝑡
++𝑄electric_vehicle_charger
+𝑡
+)expected
+−
+(
+𝑄cooling_device
+𝑡 + 𝑄cooling_storage
+𝑡
++𝑄heating_device
+𝑡
++𝑄heating_storage
+𝑡 + 𝑄dhw_device
+𝑡
++𝑄dhw_storage
+𝑡 + 𝑄non_shiftable_load
+𝑡 + 𝑄electric_vehicle_charger
+𝑡
+)actual
+if 𝑂𝑡 > 0
+0 otherwise
+(A.53)
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 27 of 24
+
+PDF PAGE 28
+CityLearn v2
+Table A.6: CityLearn datasets.
+Name1,2 Loc. CZ3
+Date4 Bldgs. Type5 Model Signal Load ESS PVOccupant
+Thermal
+Outage
+Pricing
+Emissions
+Cooling
+Heating
+DHW
+Non-shift
+Cooling
+Heating
+DHW
+Electrical
+EV
+*_2020_climate_zone_1 New Orleans, LA, US 2A Jan-Dec, 05 9 Com ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2020_climate_zone_2 Atlanta, GA, US 3A Jan-Dec, 05 9 Com ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2020_climate_zone_3 Nashville, TN, US 4A Jan-Dec, 05 9 Com ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2020_climate_zone_4 Chicago, IL, US 5A Jan-Dec, 05 9 Com ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2021 New Orleans, LA, US 2A Jan-Dec 05, 14-17 9 Com ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2022_phase_1 Fontana, CA, US 3B Aug, 16-Jul, 17 5 Res ✓ ✓ ✓ ✓ ✓
+*_2022_phase_2 Fontana, CA, US 3B Aug, 16-Jul, 17 5 Res ✓ ✓ ✓ ✓ ✓
+*_2022_phase_3 Fontana, CA, US 3B Aug, 16-Jul, 17 7 Res ✓ ✓ ✓ ✓ ✓
+*_2022_phase_all Fontana, CA, US 3B Aug, 16-Jul, 17 17 Res ✓ ✓ ✓ ✓ ✓
+baeda_3dem Albuquerque, NM, US 4B Jun-Aug, TMY3 4 Com ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_1 Austin, TX, US 2A Jun, 18 3 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_2_local_evaluation Austin, TX, US 2A Jun, 18 3 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_2_online_evaluation_1 Austin, TX, US 2A Jun, 21-Aug, 21 3 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_2_online_evaluation_2 Austin, TX, US 2A Jun, 21-Aug, 21 3 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_2_online_evaluation_3 Austin, TX, US 2A Jun, 21-Aug, 21 3 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_3_1 Austin, TX, US 2A Jun, 21-Aug, 21 6 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_3_2 Austin, TX, US 2A Jun, 21-Aug, 21 6 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+*_2023_phase_3_3 Austin, TX, US 2A Jun, 21-Aug, 21 6 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+tx_travis_county_neighborhood Travis Co., TX, US 2A Jun-Aug 18 100 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓
+ca_alameda_county_neighborhood Alameda Co., CA, US 3C Jun-Aug 18 73 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓
+vt_chittenden_county_neighborhood Chittenden Co., VT, US 6A Jan-Mar 18 43 Res ✓ ✓ ✓ ✓ ✓ ✓ ✓
+quebec_neighborhood Quebec, Canada 6A Jan-Mar 20-22 10 Res ✓ ✓ ✓ ✓ ✓ ✓
+ev_dataset Porto, Portugal 3B Jan-Dec 18-22 9 Com, Res ✓ ✓
+1 The datasets are available at ANONYMOUS.
+2 * in the name is a placeholder for citylearn_challenge.
+3 Climate zone temperature-humidity types: 2A (hot-humid), 3A (warm-humid), 3B (warm-dry), 3C (warm-marine), 4A (mixed-humid), 4B (mixed-dry), 5A (cool-humid), and 6A (cold-humid).
+4 The year is an abbreviation of 20XX.
+5 Building archetypes: Commercial (Com) and Residential (Res).
+Nweye et al.:Preprint submitted to Journal of Building Performance Simulation Page 28 of 24
