@@ -38,4 +38,6 @@ checkpoints/
 Thumbs.db
 Desktop.ini
 
+/tmp/
 ./tmp
+./tmp/*
