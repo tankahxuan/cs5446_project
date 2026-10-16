@@ -32,6 +32,10 @@ runs/
 checkpoints/
 *.log
 
+# Experiment outputs: model checkpoints, trajectories, KPIs, and run metadata.
+# These can be regenerated locally and should not be committed.
+outputs/
+
 # Operating system files
 .DS_Store
 Thumbs.db
