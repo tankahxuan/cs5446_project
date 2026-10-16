@@ -10,7 +10,17 @@ from typing import Any
 import citylearn
 import pandas as pd
 from citylearn.agents.rbc import BasicRBC
-from citylearn.citylearn import CityLearnEnv
+
+try:
+    from src.experiment_data import (
+        ObservationHistoryCityLearnEnv,
+        observations_dataframe,
+    )
+except ModuleNotFoundError:
+    from experiment_data import (
+        ObservationHistoryCityLearnEnv,
+        observations_dataframe,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +43,7 @@ def _get_hour(
 
 
 def _action_records(
-    env: CityLearnEnv,
+    env: ObservationHistoryCityLearnEnv,
     observations: list[list[float]],
     actions: list[list[float]],
     time_step: int,
@@ -81,7 +91,7 @@ def run_basic_rbc(
     if not schema.is_file():
         raise FileNotFoundError(f"CityLearn schema was not found: {schema}")
 
-    env = CityLearnEnv(
+    env = ObservationHistoryCityLearnEnv(
         schema=schema,
         central_agent=False,
         random_seed=random_seed,
@@ -110,6 +120,7 @@ def run_basic_rbc(
 
     actions = pd.DataFrame(action_records)
     rewards = pd.DataFrame(reward_records)
+    observations = observations_dataframe(env)
     kpis = env.evaluate()
     kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
 
@@ -117,6 +128,7 @@ def run_basic_rbc(
         output_directory.mkdir(parents=True, exist_ok=True)
         actions.to_csv(output_directory / "actions.csv", index=False)
         rewards.to_csv(output_directory / "rewards.csv", index=False)
+        observations.to_csv(output_directory / "observations.csv", index=False)
         kpis.to_csv(output_directory / "kpis.csv", index=False)
         kpi_table.to_csv(output_directory / "kpi_table.csv")
 
@@ -128,6 +140,8 @@ def run_basic_rbc(
             "random_seed": random_seed,
             "time_steps": env.time_steps,
             "control_steps": int(actions["time_step"].nunique()),
+            "observation_rows": len(observations),
+            "observation_columns": list(observations.columns),
             "buildings": [building.name for building in env.buildings],
             "action_names": env.action_names,
             "action_map": agent.action_map,
@@ -142,6 +156,7 @@ def run_basic_rbc(
         "agent": agent,
         "actions": actions,
         "rewards": rewards,
+        "observations": observations,
         "kpis": kpis,
         "kpi_table": kpi_table,
         "output_directory": output_directory,

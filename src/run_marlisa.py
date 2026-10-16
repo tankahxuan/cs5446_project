@@ -19,10 +19,13 @@ import numpy as np
 import pandas as pd
 import torch
 from citylearn.agents.marlisa import MARLISA
-from citylearn.citylearn import CityLearnEnv
 from citylearn.reward_function import IndependentSACReward, MARL
 
 try:
+    from src.experiment_data import (
+        ObservationHistoryCityLearnEnv,
+        observations_dataframe,
+    )
     from src.rewards import CarbonAwareReward, FairCarbonAwareReward
     from src.run_independent_sac import (
         _final_action_records,
@@ -32,6 +35,10 @@ try:
     )
 except ModuleNotFoundError:
     # Support direct execution: python src/run_marlisa.py
+    from experiment_data import (
+        ObservationHistoryCityLearnEnv,
+        observations_dataframe,
+    )
     from rewards import CarbonAwareReward, FairCarbonAwareReward
     from run_independent_sac import (
         _final_action_records,
@@ -305,7 +312,7 @@ def run_marlisa(
     if simulation_end_time_step is not None:
         env_kwargs["simulation_end_time_step"] = simulation_end_time_step
 
-    env = CityLearnEnv(**env_kwargs)
+    env = ObservationHistoryCityLearnEnv(**env_kwargs)
     if reward == "independent_sac":
         env.reward_function = IndependentSACReward(env.get_metadata())
     elif reward == "carbon":
@@ -359,6 +366,7 @@ def run_marlisa(
     training_rewards = pd.DataFrame(_training_reward_records(env, episodes))
     actions = pd.DataFrame(_final_action_records(agent, env))
     rewards = pd.DataFrame(_final_reward_records(env))
+    observations = observations_dataframe(env)
     kpis = env.evaluate()
     kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
     fairness = _fairness_summary(kpis)
@@ -415,6 +423,8 @@ def run_marlisa(
         "episodes": episodes,
         "final_episode_is_deterministic": True,
         "episode_time_steps": env.time_steps,
+        "observation_rows": len(observations),
+        "observation_columns": list(observations.columns),
         "buildings": [building.name for building in env.buildings],
         "observation_names": env.observation_names,
         "action_names": env.action_names,
@@ -458,6 +468,7 @@ def run_marlisa(
         )
         actions.to_csv(output_directory / "actions.csv", index=False)
         rewards.to_csv(output_directory / "rewards.csv", index=False)
+        observations.to_csv(output_directory / "observations.csv", index=False)
         kpis.to_csv(output_directory / "kpis.csv", index=False)
         kpi_table.to_csv(output_directory / "kpi_table.csv")
         fairness.to_csv(output_directory / "fairness_summary.csv", index=False)
@@ -473,6 +484,7 @@ def run_marlisa(
         "training_rewards": training_rewards,
         "actions": actions,
         "rewards": rewards,
+        "observations": observations,
         "kpis": kpis,
         "kpi_table": kpi_table,
         "fairness": fairness,

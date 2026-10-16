@@ -83,6 +83,7 @@ Start with [`notebooks/00_Getting_Started.ipynb`](notebooks/00_Getting_Started.i
 | `src/run_carbon_aware_marlisa.py` | Carbon-aware MARLISA experiment runner |
 | `src/run_fair_carbon_aware_marlisa.py` | Fair carbon-aware MARLISA experiment runner |
 | `src/rewards.py` | Project-specific carbon reward functions |
+| `dashboard/app.py` | Local Plotly Dash results dashboard |
 | `requirements.txt` | Python packages for the project |
 | `.gitignore` | Excludes local environments and generated files |
 
@@ -94,7 +95,7 @@ Open [`notebooks/01_Rule_Based_Control.ipynb`](notebooks/01_Rule_Based_Control.i
 python src/run_rbc.py
 ```
 
-The experiment uses decentralized control so each building receives its own action vector, matching the planned independent SAC and MARLISA setup. It saves actions, rewards, KPIs, a pivoted KPI table, and run metadata under `outputs/rbc/`. The `outputs/` directory is intentionally ignored because these files can be regenerated.
+The experiment uses decentralized control so each building receives its own action vector, matching the planned independent SAC and MARLISA setup. It saves observations, actions, rewards, KPIs, a pivoted KPI table, and run metadata under `outputs/rbc/`. The `outputs/` directory is intentionally ignored because these files can be regenerated.
 
 `BasicRBC` follows a fixed hourly schedule. It charges storage overnight and discharges it during the day; it also changes the available cooling power according to the hour. It does not learn from rewards.
 
@@ -108,7 +109,7 @@ python src/run_independent_sac.py --episodes 3
 
 The default workflow uses one SAC policy per building and CityLearn's `IndependentSACReward`. Episode 1 collects experience, the middle episode(s) train the policies, and the last episode evaluates deterministic actions. Three episodes are useful for checking the pipeline but are not enough for a final research result. Increase the episode count and repeat the experiment across fixed random seeds for reported comparisons.
 
-Results are saved under `outputs/independent_sac/`, including episode rewards, final actions and rewards, KPI tables, metadata, and a PyTorch checkpoint. The final deterministic episode uses the same 720-step period as training, so these results are for development. A held-out evaluation period should be defined before drawing research conclusions.
+Results are saved under `outputs/independent_sac/`, including final-episode observations, episode rewards, final actions and rewards, KPI tables, metadata, and a PyTorch checkpoint. The final deterministic episode uses the same 720-step period as training, so these results are for development. A held-out evaluation period should be defined before drawing research conclusions.
 
 ## MARLISA
 
@@ -141,6 +142,31 @@ python src/run_fair_carbon_aware_marlisa.py --episodes 3
 ```
 
 The reward combines local carbon emissions, each building's occupied temperature loss outside a 1°C band, and a shared penalty for the worst current building plus the worst-best comfort gap. Default weights are 1.0 for carbon, 0.25 for local comfort, and 0.25 for fairness. Results and the complete run configuration are saved under `outputs/fair_carbon_aware_marlisa/`.
+
+## Dashboard observation data
+
+Every controller runner now saves the final deterministic episode to `observations.csv`, with one wide row per time step and building. New experiment runs create this file automatically. To backfill it from the deterministic actions of existing runs without retraining the policies, run:
+
+```shell
+python src/export_observations.py
+```
+
+The replay utility processes the five canonical controller folders, reconstructs the observation trajectories, and checks that the replayed KPIs match each run's saved KPIs. Pass `--controllers` followed by specific output folder names to process only selected controllers.
+
+## Results dashboard
+
+The dashboard presents the saved results as a five-stage data story: overall
+outcome, carbon-comfort trade-off, building fairness, time-series evidence, and
+one-day building replay. Install the project requirements and start it from the
+project root:
+
+```shell
+python dashboard/app.py
+```
+
+Open the local address printed in the terminal. The application reads the
+current canonical controller outputs directly and labels them as development
+evaluations that reuse the training period.
 
 Add experiment code, configurations, and documented results as the project develops. Keep large generated outputs in the ignored `outputs/` or `runs/` folders; commit only the figures and tables needed to reproduce the report.
 

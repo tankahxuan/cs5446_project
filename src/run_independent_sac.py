@@ -18,8 +18,18 @@ import numpy as np
 import pandas as pd
 import torch
 from citylearn.agents.sac import SAC
-from citylearn.citylearn import CityLearnEnv
 from citylearn.reward_function import IndependentSACReward
+
+try:
+    from src.experiment_data import (
+        ObservationHistoryCityLearnEnv,
+        observations_dataframe,
+    )
+except ModuleNotFoundError:
+    from experiment_data import (
+        ObservationHistoryCityLearnEnv,
+        observations_dataframe,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -180,7 +190,7 @@ def run_independent_sac(
     if simulation_end_time_step is not None:
         env_kwargs["simulation_end_time_step"] = simulation_end_time_step
 
-    env = CityLearnEnv(**env_kwargs)
+    env = ObservationHistoryCityLearnEnv(**env_kwargs)
     if reward == "independent_sac":
         # CityLearn 3.0.2 otherwise forwards the schema's ComfortReward
         # arguments to this class when it is passed as a constructor override.
@@ -216,7 +226,8 @@ def run_independent_sac(
     training_rewards = pd.DataFrame(_training_reward_records(env, episodes))
     actions = pd.DataFrame(_final_action_records(agent, env))
     rewards = pd.DataFrame(_final_reward_records(env))
-    kpis = env.evaluate()
+    observations = observations_dataframe(env)
+    kpis = env.evaluate() # Calculates KPIs from the episode data currently stored in the environment.
     kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
 
     metadata = {
@@ -232,6 +243,8 @@ def run_independent_sac(
         "episodes": episodes,
         "final_episode_is_deterministic": True,
         "episode_time_steps": env.time_steps,
+        "observation_rows": len(observations),
+        "observation_columns": list(observations.columns),
         "buildings": [building.name for building in env.buildings],
         "observation_names": env.observation_names,
         "action_names": env.action_names,
@@ -262,6 +275,7 @@ def run_independent_sac(
         )
         actions.to_csv(output_directory / "actions.csv", index=False)
         rewards.to_csv(output_directory / "rewards.csv", index=False)
+        observations.to_csv(output_directory / "observations.csv", index=False)
         kpis.to_csv(output_directory / "kpis.csv", index=False)
         kpi_table.to_csv(output_directory / "kpi_table.csv")
         (output_directory / "metadata.json").write_text(
@@ -275,6 +289,7 @@ def run_independent_sac(
         "training_rewards": training_rewards,
         "actions": actions,
         "rewards": rewards,
+        "observations": observations,
         "kpis": kpis,
         "kpi_table": kpi_table,
         "metadata": metadata,
