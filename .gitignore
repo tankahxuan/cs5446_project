@@ -28,7 +28,6 @@ htmlcov/
 
 # Generated experiment files
 .cache/
-outputs/
 runs/
 checkpoints/
 *.log
