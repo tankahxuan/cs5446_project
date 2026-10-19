@@ -39,6 +39,10 @@ try:
         ObservationHistoryCityLearnEnv,
         observations_dataframe,
     )
+    from src.observation_scaling import (
+        apply_observation_space_limits,
+        observation_space_limits,
+    )
     from src.sac_reward import (
         DEFAULT_COMFORT_BAND,
         DEFAULT_DISCOMFORT_SCALE,
@@ -64,6 +68,10 @@ except ModuleNotFoundError:
     from experiment_data import (
         ObservationHistoryCityLearnEnv,
         observations_dataframe,
+    )
+    from observation_scaling import (
+        apply_observation_space_limits,
+        observation_space_limits,
     )
     from sac_reward import (
         DEFAULT_COMFORT_BAND,
@@ -106,6 +114,40 @@ def _set_random_seeds(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def _get_rng_state() -> dict[str, Any]:
+    """Capture the global RNG states that ``_set_random_seeds`` resets."""
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+
+
+def _restore_rng_state(state: dict[str, Any]) -> None:
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+
+
+def _pipeline_options(
+    train_env: ObservationHistoryCityLearnEnv,
+    *,
+    use_training_encoders: bool,
+    isolate_validation_rng: bool,
+) -> dict[str, bool]:
+    """Record the WP1 environment fixes used by a run (all off by default).
+
+    Evaluation reads these from checkpoint metadata, so validation and test use
+    the same observation handling as training.
+    """
+    return {
+        "observe_simulated_temperature": bool(train_env.observe_simulated_temperature),
+        "use_training_encoders": bool(use_training_encoders),
+        "simulate_power_outage": bool(train_env.buildings[0].simulate_power_outage),
+        "isolate_validation_rng": bool(isolate_validation_rng),
+    }
 
 
 def _training_reward_records(
@@ -254,6 +296,7 @@ def make_sac_env(
     reward_kwargs: dict[str, float] | None = None,
     include_lstm_warmup: bool = False,
     simulate_power_outage: bool | None = None,
+    observe_simulated_temperature: bool = False,
 ) -> ObservationHistoryCityLearnEnv:
     """Create a decentralized CityLearn env for one dataset split."""
     split = get_split(split) if isinstance(split, str) else split
@@ -274,6 +317,7 @@ def make_sac_env(
         "random_seed": random_seed,
         "simulation_start_time_step": start,
         "simulation_end_time_step": split.end_time_step,
+        "observe_simulated_temperature": observe_simulated_temperature,
     }
     if simulate_power_outage is not None:
         env_kwargs["simulate_power_outage"] = simulate_power_outage
@@ -372,6 +416,8 @@ def build_inference_checkpoint(
             "action_dimension": list(agent.action_dimension),
         },
         "observation_names": deepcopy(agent.observation_names),
+        # Training-window limits, so evaluation can reuse the training encoders.
+        "observation_space_limits": observation_space_limits(agent),
         "action_names": deepcopy(agent.action_names),
         "action_scaling_coefficient": float(agent.action_scaling_coefficient),
         "reward_scaling": float(agent.reward_scaling),
@@ -642,12 +688,17 @@ def evaluate_independent_sac(
     output_directory: str | Path | None = None,
     include_lstm_warmup: bool = True,
     save_results: bool = True,
+    observe_simulated_temperature: bool | None = None,
+    use_training_encoders: bool | None = None,
 ) -> dict[str, Any]:
     """Deterministically evaluate a saved SAC policy on one held-out split.
 
     Creates a fresh environment and SAC instance, restores actor weights and
     observation-normalization statistics, and does not push transitions into a
     replay buffer or run optimizer updates.
+
+    ``observe_simulated_temperature`` and ``use_training_encoders`` default to
+    the checkpoint's ``pipeline_options`` (off for older checkpoints).
     """
     if not isinstance(checkpoint, dict):
         checkpoint = load_inference_checkpoint(checkpoint)
@@ -657,6 +708,14 @@ def evaluate_independent_sac(
     random_seed = int(metadata.get("random_seed", 42))
     reward_config = dict(metadata.get("reward_config", {}))
     hyper = dict(metadata.get("hyperparameters", {}))
+    options = dict(metadata.get("pipeline_options", {}))
+    if observe_simulated_temperature is None:
+        observe_simulated_temperature = bool(options.get("observe_simulated_temperature", False))
+    if use_training_encoders is None:
+        use_training_encoders = bool(options.get("use_training_encoders", False))
+    # Pass on "outages off" only: CityLearn 3.0.2 crashes when outages are
+    # enabled on an env that starts at a warm-up step.
+    simulate_power_outage = False if options.get("simulate_power_outage") is False else None
 
     _set_random_seeds(random_seed)
     env = make_sac_env(
@@ -666,6 +725,8 @@ def evaluate_independent_sac(
         reward="electricity_discomfort",
         reward_kwargs=reward_config,
         include_lstm_warmup=include_lstm_warmup,
+        simulate_power_outage=simulate_power_outage,
+        observe_simulated_temperature=observe_simulated_temperature,
     )
     agent = make_sac_agent(
         env,
@@ -704,6 +765,14 @@ def evaluate_independent_sac(
         ),
     )
     apply_checkpoint_to_agent(agent, checkpoint)
+    if use_training_encoders:
+        limits = checkpoint.get("observation_space_limits")
+        if limits is None:
+            raise ValueError(
+                "This checkpoint has no observation_space_limits (saved before "
+                "19 Oct 2026); retrain it to evaluate with training encoders."
+            )
+        apply_observation_space_limits(agent, limits)
 
     updates_before = int(agent.gradient_updates)
     steps_before = int(agent.environment_steps)
@@ -801,6 +870,9 @@ def evaluate_independent_sac(
         "scored_transitions": max(local_step - warmup_steps, 0),
         "deterministic": True,
         "optimizer_updates_during_eval": 0,
+        "observe_simulated_temperature": bool(observe_simulated_temperature),
+        "use_training_encoders": bool(use_training_encoders),
+        "simulate_power_outage": bool(env.buildings[0].simulate_power_outage),
         "citylearn_version": citylearn.__version__,
         "torch_version": torch.__version__,
         "checkpoint_type": checkpoint.get("checkpoint_type", "unknown"),
@@ -1008,8 +1080,21 @@ def train_independent_sac(
     save_results: bool = True,
     run_test: bool = True,
     verbose: bool = True,
+    observe_simulated_temperature: bool = False,
+    use_training_encoders: bool = False,
+    simulate_power_outage: bool | None = None,
+    isolate_validation_rng: bool = False,
 ) -> dict[str, Any]:
-    """Train Independent SAC on the train split with validation-based selection."""
+    """Train Independent SAC on the train split with validation-based selection.
+
+    The last four options are the WP1 environment fixes. They default to the
+    behaviour of the 16 Oct pipeline so existing notebooks reproduce:
+    ``observe_simulated_temperature`` shows agents the simulated indoor
+    temperature; ``use_training_encoders`` scales validation/test inputs with
+    the training-window limits; ``simulate_power_outage=False`` disables the
+    schema's (deterministic) outages; ``isolate_validation_rng`` stops periodic
+    validation from re-seeding the training RNGs.
+    """
     if episodes < 1:
         raise ValueError("episodes must be >= 1")
 
@@ -1048,6 +1133,13 @@ def train_independent_sac(
         reward=reward,
         reward_kwargs=reward_config,
         include_lstm_warmup=False,
+        simulate_power_outage=simulate_power_outage,
+        observe_simulated_temperature=observe_simulated_temperature,
+    )
+    pipeline_options = _pipeline_options(
+        train_env,
+        use_training_encoders=use_training_encoders,
+        isolate_validation_rng=isolate_validation_rng,
     )
     agent = make_sac_agent(
         train_env,
@@ -1132,6 +1224,7 @@ def train_independent_sac(
             "observation_names": train_env.observation_names,
             "action_names": train_env.action_names,
             "hyperparameters": hyperparameters,
+            "pipeline_options": pipeline_options,
             "dataset_splits": {name: split.as_dict() for name, split in SPLITS.items()},
             "environment_steps": int(agent.environment_steps),
             "gradient_updates": int(agent.gradient_updates),
@@ -1151,6 +1244,9 @@ def train_independent_sac(
         if validate_now and save_results:
             _log(f"[SAC] episode {episode}/{episodes} validating on held-out split...")
             checkpoint = load_inference_checkpoint(checkpoint_path)
+            # evaluate_independent_sac() re-seeds the global RNGs; without this
+            # the validation schedule changes the training trajectory.
+            rng_state = _get_rng_state() if isolate_validation_rng else None
             validation = evaluate_independent_sac(
                 checkpoint,
                 schema=schema,
@@ -1159,6 +1255,8 @@ def train_independent_sac(
                 include_lstm_warmup=include_lstm_warmup,
                 save_results=True,
             )
+            if rng_state is not None:
+                _restore_rng_state(rng_state)
             val_row = {
                 "episode": episode,
                 "checkpoint_path": str(checkpoint_path),
@@ -1236,6 +1334,7 @@ def train_independent_sac(
         "reward_choice": reward,
         "reward_config": reward_config,
         "hyperparameters": hyperparameters,
+        "pipeline_options": pipeline_options,
         "dataset_splits": {name: split.as_dict() for name, split in SPLITS.items()},
         "training_episodes": episodes,
         "validation_every": validation_every,
@@ -1461,9 +1560,17 @@ def _run_smoke_training(
     lower_exponent: float = DEFAULT_LOWER_EXPONENT,
     higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
     include_lstm_warmup: bool = True,
+    observe_simulated_temperature: bool = False,
+    use_training_encoders: bool = False,
+    simulate_power_outage: bool | None = None,
+    isolate_validation_rng: bool = False,
     **_: Any,
 ) -> dict[str, Any]:
-    """Short end-to-end path used only for pipeline smoke tests."""
+    """Short end-to-end path used only for pipeline smoke tests.
+
+    There is no mid-training validation here, so ``isolate_validation_rng`` is
+    only recorded.
+    """
     schema = Path(schema).resolve()
     output_directory = Path(output_directory).resolve()
     seed_directory = output_directory / f"seed_{random_seed}" / "smoke"
@@ -1486,6 +1593,13 @@ def _run_smoke_training(
         reward=reward,
         reward_kwargs=reward_config,
         include_lstm_warmup=False,
+        simulate_power_outage=simulate_power_outage,
+        observe_simulated_temperature=observe_simulated_temperature,
+    )
+    pipeline_options = _pipeline_options(
+        env,
+        use_training_encoders=use_training_encoders,
+        isolate_validation_rng=isolate_validation_rng,
     )
     # Scale exploration thresholds down for truncated smoke episodes.
     episode_transitions = train_split.n_transitions
@@ -1544,6 +1658,7 @@ def _run_smoke_training(
             "standardize_start_time_step": int(agent.standardize_start_time_step),
             "end_exploration_time_step": int(agent.end_exploration_time_step),
         },
+        "pipeline_options": pipeline_options,
         "observation_names": env.observation_names,
         "action_names": env.action_names,
         "buildings": [building.name for building in env.buildings],
@@ -1645,6 +1760,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip final held-out test evaluation.",
     )
+    fixes = parser.add_argument_group("WP1 environment fixes (off by default)")
+    fixes.add_argument(
+        "--observe-simulated-temperature",
+        action="store_true",
+        help="Agents observe the last simulated indoor temperature.",
+    )
+    fixes.add_argument(
+        "--training-encoders",
+        action="store_true",
+        help="Scale validation/test inputs with the training-window limits.",
+    )
+    fixes.add_argument(
+        "--no-power-outages",
+        action="store_true",
+        help="Disable the schema's power outages.",
+    )
+    fixes.add_argument(
+        "--isolate-validation-rng",
+        action="store_true",
+        help="Stop periodic validation from re-seeding training RNGs.",
+    )
+    fixes.add_argument(
+        "--pipeline-fixes",
+        action="store_true",
+        help="Turn on all four fixes above.",
+    )
     return parser.parse_args()
 
 
@@ -1668,6 +1809,14 @@ def main() -> None:
             lambda_discomfort=args.lambda_discomfort,
             simulation_end_time_step=args.simulation_end_time_step,
             run_test=not args.no_test,
+            observe_simulated_temperature=(
+                args.observe_simulated_temperature or args.pipeline_fixes
+            ),
+            use_training_encoders=args.training_encoders or args.pipeline_fixes,
+            simulate_power_outage=(
+                False if args.no_power_outages or args.pipeline_fixes else None
+            ),
+            isolate_validation_rng=args.isolate_validation_rng or args.pipeline_fixes,
         )
         results.append(result)
         print(f"\nSeed {seed} finished. Outputs: {result['output_directory']}")

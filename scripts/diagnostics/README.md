@@ -23,4 +23,4 @@ The three `ab_sac_inputs.py` runs are independent and can run in parallel. `runs
 | `paired_encoder_eval.py` | Evaluates each run's selected checkpoint on the test split with per-split and with training encoders |
 | `sim_temperature_env.py` | The observation-fix prototype shared by the scripts above |
 
-The scripts patch `src.run_independent_sac` at runtime and do not change `src/`. The project version of the observation fix will live in `src/experiment_data.py`.
+The scripts patch `src.run_independent_sac` at runtime and do not change `src/`. The project versions of both fixes are now options in `src/` (19 Oct): `observe_simulated_temperature` in `src/experiment_data.py` and `use_training_encoders` with `src/observation_scaling.py`, or `--pipeline-fixes` on `src/run_independent_sac.py`.
