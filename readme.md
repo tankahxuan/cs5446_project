@@ -41,6 +41,12 @@ pip install -r requirements.txt
 
 > **Tip (Windows users)**: If PowerShell restricts running scripts, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`, or execute commands directly with `.\.venv\Scripts\python.exe`.
 
+> **Windows: `import torch` fails with `WinError 1114`**: This happens when the venv is built from Miniconda's Python, which loads an older Visual C++ runtime. Build the venv from a uv-managed Python instead:
+> ```powershell
+> uv venv --python 3.11 --python-preference only-managed .venv
+> uv pip install -r requirements-lock.txt --python .venv\Scripts\python.exe
+> ```
+
 ### Linux / macOS / WSL
 
 ```bash
@@ -60,6 +66,15 @@ pip install -r requirements.txt
 > source .venv/bin/activate
 > uv pip install -r requirements.txt
 > ```
+
+### Exact versions for experiment runs
+
+`requirements.txt` pins only CityLearn. `requirements-lock.txt` pins every package to the versions that ran the tests and diagnostics, for Python 3.11.5 or newer on Windows, macOS and Linux. Use it for any run whose results go into the report:
+
+```shell
+pip install -r requirements-lock.txt          # or: uv pip install -r requirements-lock.txt
+python -m pytest tests/test_rewards.py tests/test_sac_reward.py tests/test_sac_splits.py   # fast checks, about 10 s
+```
 
 In VS Code, install the Python and Jupyter extensions, open a notebook, then select **Kernel → Python Environments → .venv**. The virtual environment is excluded from Git by `.gitignore`; each collaborator creates their own.
 
@@ -84,8 +99,25 @@ Start with [`notebooks/00_Getting_Started.ipynb`](notebooks/00_Getting_Started.i
 | `src/run_fair_carbon_aware_marlisa.py` | Fair carbon-aware MARLISA experiment runner |
 | `src/rewards.py` | Project-specific carbon reward functions |
 | `dashboard/app.py` | Local Plotly Dash results dashboard |
+| `tests/` | Reward unit tests, split checks and an end-to-end SAC smoke test |
+| `scripts/diagnostics/` | 18 Oct simulator and SAC-input diagnostics (see its README) |
 | `requirements.txt` | Python packages for the project |
+| `requirements-lock.txt` | Exact package versions for reproducible runs |
 | `.gitignore` | Excludes local environments and generated files |
+
+### Notebook status
+
+Notebooks 00–06 stay as their authors left them, as a record of the work so far. New work goes into new notebooks numbered from 07, and new options in `src/` default to the old behaviour so these notebooks keep running as before. Their numbers are development results (in-sample or single-seed), not findings for the report.
+
+| Notebook | Pipeline | Notes |
+| --- | --- | --- |
+| `00_Getting_Started` | Data exploration | Current |
+| `01_Rule_Based_Control` | BasicRBC, all of June, 2 °C comfort band | Current |
+| `02_Independent_SAC` | SAC on train/validation/test splits, 1 °C band | Current; one seed |
+| `03_MARLISA` – `05_Fair_Carbon_Aware_MARLISA` | MARLISA variants, trained and scored on all of June, 3 episodes, 2 °C band | Their Independent SAC comparison rows come from the pre-16 Oct electricity-only reward. 04 and 05 expect the old `outputs/independent_sac/` layout. |
+| `06_agent_evaluation` | Plotly comparison of 10-episode runs on all of June | Leaves out SAC unless old-layout SAC outputs exist; comfort charts plot dataset temperatures |
+| `07_pipeline_checks` (planned) | Checks for the corrected pipeline | |
+| `08_results` (planned) | Held-out, multi-seed results | Source of the report's numbers |
 
 ## Rule-based controller
 
