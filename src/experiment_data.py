@@ -10,25 +10,67 @@ import pandas as pd
 from citylearn.citylearn import CityLearnEnv
 
 
+INDOOR_TEMPERATURE = "indoor_dry_bulb_temperature"
+
+
 class ObservationHistoryCityLearnEnv(CityLearnEnv):
     """CityLearn environment that retains the most recent episode observations.
 
     ``reset`` clears the history, so after an agent completes its deterministic
     final episode this list contains that episode only.  The first item is the
     initial observation and every subsequent item is returned by ``step``.
+
+    ``observe_simulated_temperature=True`` replaces each building's
+    ``indoor_dry_bulb_temperature`` observation with the temperature most
+    recently simulated by its LSTM model. Stock CityLearn 3.0.2 observes the
+    dataset (ideal-load) temperature instead, so agents never see the effect of
+    their own cooling, although the reward is computed from the simulated value.
+    Only the values returned by ``reset``/``step`` (and the history) change; the
+    reward, KPIs and the ``observations`` property are untouched.
     """
 
     observation_history: list[list[list[float]]]
 
+    def __init__(
+        self,
+        *args: Any,
+        observe_simulated_temperature: bool = False,
+        **kwargs: Any,
+    ):
+        # CityLearnEnv.__init__ calls reset(), so the flag must exist first.
+        self.observe_simulated_temperature = bool(observe_simulated_temperature)
+        super().__init__(*args, **kwargs)
+
     def reset(self, *args: Any, **kwargs: Any):
         observations, info = super().reset(*args, **kwargs)
+        observations = self._agent_observations(observations)
         self.observation_history = [deepcopy(observations)]
         return observations, info
 
     def step(self, actions: Any):
         observations, rewards, terminated, truncated, info = super().step(actions)
+        observations = self._agent_observations(observations)
         self.observation_history.append(deepcopy(observations))
         return observations, rewards, terminated, truncated, info
+
+    def _agent_observations(self, observations: Any) -> Any:
+        if not self.observe_simulated_temperature:
+            return observations
+        if self.central_agent:
+            raise ValueError("observe_simulated_temperature requires central_agent=False.")
+
+        patched = []
+        for building, names, values in zip(self.buildings, self.observation_names, observations):
+            values = list(values)
+            if INDOOR_TEMPERATURE in names:
+                time_step = int(building.time_step)
+                # Buildings stop advancing on the terminal transition, so their
+                # current step has already been simulated there.
+                last_simulated = time_step if self.terminated else max(time_step - 1, 0)
+                series = building.energy_simulation.indoor_dry_bulb_temperature
+                values[names.index(INDOOR_TEMPERATURE)] = float(series[last_simulated])
+            patched.append(values)
+        return patched
 
 
 def observations_dataframe(env: ObservationHistoryCityLearnEnv) -> pd.DataFrame:

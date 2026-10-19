@@ -26,6 +26,7 @@ try:
         ObservationHistoryCityLearnEnv,
         observations_dataframe,
     )
+    from src.observation_scaling import observation_space_limits
     from src.rewards import CarbonAwareReward, FairCarbonAwareReward
     from src.run_independent_sac import (
         _final_action_records,
@@ -39,6 +40,7 @@ except ModuleNotFoundError:
         ObservationHistoryCityLearnEnv,
         observations_dataframe,
     )
+    from observation_scaling import observation_space_limits
     from rewards import CarbonAwareReward, FairCarbonAwareReward
     from run_independent_sac import (
         _final_action_records,
@@ -183,6 +185,8 @@ def _save_checkpoint(
         "regression_flag": agent.regression_flag,
         "pca_flag": agent.pca_flag,
         "energy_size_coefficient": agent.energy_size_coefficient,
+        # Training-window limits, so a held-out evaluation can reuse the encoders.
+        "observation_space_limits": observation_space_limits(agent),
     }
     torch.save(checkpoint, path)
 
@@ -287,11 +291,16 @@ def run_marlisa(
     comfort_band: float = 1.0,
     simulation_end_time_step: int | None = None,
     save_results: bool = True,
+    observe_simulated_temperature: bool = False,
+    simulate_power_outage: bool | None = None,
 ) -> dict[str, Any]:
     """Train MARLISA and evaluate its final deterministic episode.
 
     Three episodes provide the minimum workflow used by the SAC notebook:
     initial exploration, one learning episode, and deterministic evaluation.
+
+    ``observe_simulated_temperature`` and ``simulate_power_outage=False`` are
+    WP1 environment fixes; their defaults keep the existing behaviour.
     """
     if episodes < 3:
         raise ValueError(
@@ -308,9 +317,12 @@ def run_marlisa(
         "schema": schema,
         "central_agent": False,
         "random_seed": random_seed,
+        "observe_simulated_temperature": observe_simulated_temperature,
     }
     if simulation_end_time_step is not None:
         env_kwargs["simulation_end_time_step"] = simulation_end_time_step
+    if simulate_power_outage is not None:
+        env_kwargs["simulate_power_outage"] = simulate_power_outage
 
     env = ObservationHistoryCityLearnEnv(**env_kwargs)
     if reward == "independent_sac":
@@ -450,6 +462,10 @@ def run_marlisa(
             "pca_compression": pca_compression,
             "iterations": iterations,
         },
+        "pipeline_options": {
+            "observe_simulated_temperature": bool(env.observe_simulated_temperature),
+            "simulate_power_outage": bool(env.buildings[0].simulate_power_outage),
+        },
         "comparison_note": (
             "The SAC hyperparameters match the independent SAC runner. Standard "
             "MARLISA uses CityLearn's district-coupled MARL reward and adds "
@@ -523,6 +539,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional shorter end step, useful only for smoke tests.",
     )
+    parser.add_argument(
+        "--observe-simulated-temperature",
+        action="store_true",
+        help="Agents observe the last simulated indoor temperature (WP1 fix).",
+    )
+    parser.add_argument(
+        "--no-power-outages",
+        action="store_true",
+        help="Disable the schema's power outages (WP1 fix).",
+    )
     return parser.parse_args()
 
 
@@ -537,6 +563,8 @@ def main() -> None:
         batch_size=args.batch_size,
         update_per_time_step=args.updates_per_step,
         simulation_end_time_step=args.simulation_end_time_step,
+        observe_simulated_temperature=args.observe_simulated_temperature,
+        simulate_power_outage=False if args.no_power_outages else None,
     )
     print("\nMARLISA evaluation (lower is better for these KPIs):")
     print(result["kpi_table"].round(3).to_string())

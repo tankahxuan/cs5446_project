@@ -78,12 +78,15 @@ def run_basic_rbc(
     output_directory: str | Path = DEFAULT_OUTPUT_DIRECTORY,
     random_seed: int = 42,
     save_results: bool = True,
+    simulate_power_outage: bool | None = None,
 ) -> dict[str, Any]:
     """Simulate one complete episode with CityLearn's ``BasicRBC``.
 
     The environment is decentralized so that each building has its own action
     vector. This is the same control arrangement used by independent SAC and
     MARLISA, which makes later comparisons easier to interpret.
+
+    ``simulate_power_outage=None`` keeps the schema setting (outages on).
     """
     schema = Path(schema).resolve()
     output_directory = Path(output_directory).resolve()
@@ -91,11 +94,14 @@ def run_basic_rbc(
     if not schema.is_file():
         raise FileNotFoundError(f"CityLearn schema was not found: {schema}")
 
-    env = ObservationHistoryCityLearnEnv(
-        schema=schema,
-        central_agent=False,
-        random_seed=random_seed,
-    )
+    env_kwargs: dict[str, Any] = {
+        "schema": schema,
+        "central_agent": False,
+        "random_seed": random_seed,
+    }
+    if simulate_power_outage is not None:
+        env_kwargs["simulate_power_outage"] = simulate_power_outage
+    env = ObservationHistoryCityLearnEnv(**env_kwargs)
     agent = BasicRBC(env)
     observations, _ = env.reset(seed=random_seed)
     terminated = truncated = False
@@ -138,6 +144,7 @@ def run_basic_rbc(
             "schema": str(schema),
             "central_agent": False,
             "random_seed": random_seed,
+            "simulate_power_outage": bool(env.buildings[0].simulate_power_outage),
             "time_steps": env.time_steps,
             "control_steps": int(actions["time_step"].nunique()),
             "observation_rows": len(observations),
@@ -180,6 +187,11 @@ def parse_args() -> argparse.Namespace:
         help="Directory for CSV results and metadata.",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument(
+        "--no-power-outages",
+        action="store_true",
+        help="Disable the schema's power outages (WP1 fix).",
+    )
     return parser.parse_args()
 
 
@@ -189,6 +201,7 @@ def main() -> None:
         schema=args.schema,
         output_directory=args.output_directory,
         random_seed=args.seed,
+        simulate_power_outage=False if args.no_power_outages else None,
     )
 
     control_steps = result["actions"]["time_step"].nunique()

@@ -45,3 +45,7 @@ Desktop.ini
 tmp/
 /tmp/*
 *.tmp
+
+# Personal working files (kept out of the shared repo)
+CLAUDE.md
+implementation_plan.md
