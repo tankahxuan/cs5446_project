@@ -2,7 +2,7 @@
 
 The experiment follows the same schema, seed, SAC hyperparameters, training
 phases, deterministic evaluation, and output layout as the independent SAC
-baseline.  Standard MARLISA uses CityLearn's district-coupled ``MARL`` reward
+baseline. Standard MARLISA uses CityLearn's district-coupled ``MARL`` reward
 and additionally learns building demand estimators and shares coordination
 variables between building policies.
 """
@@ -22,31 +22,71 @@ from citylearn.agents.marlisa import MARLISA
 from citylearn.reward_function import IndependentSACReward, MARL
 
 try:
+    from src.dataset_splits import (
+        DEFAULT_SEEDS,
+        LSTM_LOOKBACK,
+        SPLITS,
+        TEST_SPLIT,
+        TRAIN_SPLIT,
+        VALIDATION_SPLIT,
+        TimeSplit,
+        get_split,
+        warmup_start_time_step,
+    )
     from src.experiment_data import (
         ObservationHistoryCityLearnEnv,
         observations_dataframe,
     )
-    from src.observation_scaling import observation_space_limits
-    from src.rewards import CarbonAwareReward, FairCarbonAwareReward
+    from src.observation_scaling import (
+        apply_observation_space_limits,
+        observation_space_limits,
+    )
+    from src.rewards import (
+        CarbonAwareReward,
+        DisparityAwareReward,
+        FairCarbonAwareReward,
+        WorstCaseFairReward,
+    )
     from src.run_independent_sac import (
         _final_action_records,
         _final_reward_records,
         _set_random_seeds,
         _training_reward_records,
+        compute_split_kpis,
     )
 except ModuleNotFoundError:
     # Support direct execution: python src/run_marlisa.py
+    from dataset_splits import (
+        DEFAULT_SEEDS,
+        LSTM_LOOKBACK,
+        SPLITS,
+        TEST_SPLIT,
+        TRAIN_SPLIT,
+        VALIDATION_SPLIT,
+        TimeSplit,
+        get_split,
+        warmup_start_time_step,
+    )
     from experiment_data import (
         ObservationHistoryCityLearnEnv,
         observations_dataframe,
     )
-    from observation_scaling import observation_space_limits
-    from rewards import CarbonAwareReward, FairCarbonAwareReward
+    from observation_scaling import (
+        apply_observation_space_limits,
+        observation_space_limits,
+    )
+    from rewards import (
+        CarbonAwareReward,
+        DisparityAwareReward,
+        FairCarbonAwareReward,
+        WorstCaseFairReward,
+    )
     from run_independent_sac import (
         _final_action_records,
         _final_reward_records,
         _set_random_seeds,
         _training_reward_records,
+        compute_split_kpis,
     )
 
 
@@ -54,7 +94,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCHEMA = PROJECT_ROOT / "notebooks" / "data" / "schema.json"
 DEFAULT_OUTPUT_DIRECTORY = PROJECT_ROOT / "outputs" / "marlisa"
 RewardChoice = Literal[
-    "independent_sac", "carbon", "fair_carbon", "marl", "schema"
+    "independent_sac",
+    "carbon",
+    "fair_carbon",
+    "worst_case_fair",
+    "disparity_fair",
+    "marl",
+    "schema",
 ]
 
 
@@ -63,7 +109,7 @@ class ComparableMARLISA(MARLISA):
 
     The upstream method indexes ``policy_net`` using the coordination iteration.
     That causes all buildings to use the same policy in each iteration and leaves
-    policies unused when the building count differs from ``iterations``.  This
+    policies unused when the building count differs from ``iterations``. This
     override preserves the upstream calculation and indexes the policy using the
     current building instead.
     """
@@ -101,7 +147,7 @@ class ComparableMARLISA(MARLISA):
                 encoded = self.pca[building].transform(encoded.reshape(1, -1))[0]
                 tensor = torch.FloatTensor(encoded).unsqueeze(0).to(self.device)
 
-                # CityLearn 3.0.2 uses policy_net[iteration] here.  Each building
+                # CityLearn 3.0.2 uses policy_net[iteration] here. Each building
                 # has its own trained policy, so the building index is required.
                 sampled, _, mean = self.policy_net[building].sample(tensor)
                 action_tensor = mean if deterministic else sampled
@@ -191,6 +237,55 @@ def _save_checkpoint(
     torch.save(checkpoint, path)
 
 
+def load_marlisa_checkpoint(path: str | Path) -> dict[str, Any]:
+    """Load a saved MARLISA checkpoint dictionary."""
+    checkpoint = torch.load(
+        Path(path).resolve(), map_location="cpu", weights_only=False
+    )
+    if not isinstance(checkpoint, dict):
+        raise TypeError(f"Expected a dict checkpoint, got {type(checkpoint)}")
+    return checkpoint
+
+
+def apply_checkpoint_to_marlisa(
+    agent: MARLISA,
+    checkpoint: dict[str, Any],
+) -> MARLISA:
+    """Restore actor policies, observation normalization, PCA, and demand estimators."""
+    for network, state in zip(agent.policy_net, checkpoint["policy_net"]):
+        network.load_state_dict(state)
+
+    normalization = checkpoint.get("normalization", {})
+    if "observation_mean" in normalization:
+        agent.norm_mean = normalization["observation_mean"]
+        agent.norm_std = normalization["observation_std"]
+    if "reward_mean" in normalization:
+        agent.r_norm_mean = normalization["reward_mean"]
+        agent.r_norm_std = normalization["reward_std"]
+
+    for model, state in zip(agent.pca, checkpoint.get("pca", [])):
+        if state.get("components") is not None:
+            model.components_ = np.array(state["components"])
+            model.mean_ = np.array(state["mean"])
+            model.explained_variance_ = np.array(state["explained_variance"])
+
+    for est, state in zip(
+        agent.state_estimator, checkpoint.get("demand_estimators", [])
+    ):
+        if state.get("coef") is not None:
+            est.coef_ = np.array(state["coef"])
+            est.intercept_ = np.array(state["intercept"])
+
+    if "regression_flag" in checkpoint:
+        agent.regression_flag = checkpoint["regression_flag"]
+    if "pca_flag" in checkpoint:
+        agent.pca_flag = checkpoint["pca_flag"]
+    if "energy_size_coefficient" in checkpoint:
+        agent.energy_size_coefficient = checkpoint["energy_size_coefficient"]
+
+    return agent
+
+
 def _fairness_summary(kpis: pd.DataFrame) -> pd.DataFrame:
     """Summarize the spread in building discomfort for the final episode."""
     values = kpis.loc[
@@ -243,6 +338,12 @@ def _comparison_table(
         "Fair carbon-aware MARLISA": (
             PROJECT_ROOT / "outputs" / "fair_carbon_aware_marlisa" / "kpis.csv"
         ),
+        "Worst-case fair MARLISA": (
+            PROJECT_ROOT / "outputs" / "worst_case_fair_marlisa" / "kpis.csv"
+        ),
+        "Disparity-aware MARLISA": (
+            PROJECT_ROOT / "outputs" / "disparity_aware_marlisa" / "kpis.csv"
+        ),
     }
     series: dict[str, pd.Series] = {}
 
@@ -259,6 +360,245 @@ def _comparison_table(
         .set_index("cost_function")["value"]
     )
     return pd.concat(series, axis=1).sort_index()
+
+
+def make_marlisa_env(
+    schema: str | Path = DEFAULT_SCHEMA,
+    split: TimeSplit | str | None = None,
+    *,
+    random_seed: int = 42,
+    reward: RewardChoice = "marl",
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    comfort_band: float = 1.0,
+    simulation_start_time_step: int | None = None,
+    simulation_end_time_step: int | None = None,
+    observe_simulated_temperature: bool = False,
+    simulate_power_outage: bool | None = None,
+) -> ObservationHistoryCityLearnEnv:
+    """Create and configure a CityLearn environment for MARLISA."""
+    schema = Path(schema).resolve()
+    if not schema.is_file():
+        raise FileNotFoundError(f"CityLearn schema was not found: {schema}")
+
+    start_step = simulation_start_time_step
+    end_step = simulation_end_time_step
+
+    if split is not None and split != "all":
+        split_obj = get_split(split) if isinstance(split, str) else split
+        if start_step is None:
+            start_step = split_obj.start_time_step
+        if end_step is None:
+            end_step = split_obj.end_time_step
+
+    env_kwargs: dict[str, Any] = {
+        "schema": schema,
+        "central_agent": False,
+        "random_seed": random_seed,
+        "observe_simulated_temperature": observe_simulated_temperature,
+    }
+    if start_step is not None:
+        env_kwargs["simulation_start_time_step"] = start_step
+    if end_step is not None:
+        env_kwargs["simulation_end_time_step"] = end_step
+    if simulate_power_outage is not None:
+        env_kwargs["simulate_power_outage"] = simulate_power_outage
+
+    env = ObservationHistoryCityLearnEnv(**env_kwargs)
+
+    if reward == "independent_sac":
+        env.reward_function = IndependentSACReward(env.get_metadata())
+    elif reward == "carbon":
+        env.reward_function = CarbonAwareReward(
+            env.get_metadata(), district_shared=False
+        )
+    elif reward in ("fair_carbon", "worst_case_fair", "disparity_fair"):
+        resolved_mode = (
+            "worst_case"
+            if reward == "worst_case_fair"
+            else "disparity"
+            if reward == "disparity_fair"
+            else fairness_mode
+        )
+        env.reward_function = FairCarbonAwareReward(
+            env.get_metadata(),
+            carbon_weight=carbon_weight,
+            comfort_weight=comfort_weight,
+            fairness_weight=fairness_weight,
+            worst_case_weight=worst_case_weight,
+            disparity_weight=disparity_weight,
+            fairness_mode=resolved_mode,
+            comfort_band=comfort_band,
+        )
+    elif reward == "marl":
+        env.reward_function = MARL(env.get_metadata())
+    elif reward != "schema":
+        raise ValueError(f"Unsupported reward choice: {reward}")
+
+    for index, action_space in enumerate(env.action_space):
+        action_space.seed(random_seed + index)
+
+    return env
+
+
+def evaluate_marlisa(
+    agent_or_checkpoint: ComparableMARLISA | MARLISA | dict[str, Any] | str | Path,
+    *,
+    schema: str | Path = DEFAULT_SCHEMA,
+    split: TimeSplit | str = "test",
+    output_directory: str | Path | None = None,
+    random_seed: int = 42,
+    reward: RewardChoice = "marl",
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    comfort_band: float = 1.0,
+    save_results: bool = True,
+    observe_simulated_temperature: bool = False,
+    use_training_encoders: bool = False,
+    simulate_power_outage: bool | None = None,
+    pipeline_fixes: bool = False,
+    experiment_label: str | None = None,
+) -> dict[str, Any]:
+    """Deterministically evaluate a MARLISA policy on a specific dataset split."""
+    if pipeline_fixes:
+        observe_simulated_temperature = True
+        use_training_encoders = True
+        if simulate_power_outage is None:
+            simulate_power_outage = False
+
+    split_obj = get_split(split) if isinstance(split, str) else split
+
+    env = make_marlisa_env(
+        schema=schema,
+        split=split_obj,
+        random_seed=random_seed,
+        reward=reward,
+        carbon_weight=carbon_weight,
+        comfort_weight=comfort_weight,
+        fairness_weight=fairness_weight,
+        worst_case_weight=worst_case_weight,
+        disparity_weight=disparity_weight,
+        fairness_mode=fairness_mode,
+        comfort_band=comfort_band,
+        observe_simulated_temperature=observe_simulated_temperature,
+        simulate_power_outage=simulate_power_outage,
+    )
+
+    if isinstance(agent_or_checkpoint, (str, Path, dict)):
+        checkpoint = (
+            agent_or_checkpoint
+            if isinstance(agent_or_checkpoint, dict)
+            else load_marlisa_checkpoint(agent_or_checkpoint)
+        )
+        agent = ComparableMARLISA(
+            env,
+            hidden_dimension=checkpoint.get("metadata", {}).get(
+                "sac_hyperparameters", {}
+            ).get("hidden_dimension", [256, 256]),
+        )
+        apply_checkpoint_to_marlisa(agent, checkpoint)
+        if use_training_encoders:
+            limits = checkpoint.get("observation_space_limits")
+            if limits is not None:
+                apply_observation_space_limits(agent, limits)
+    else:
+        agent = agent_or_checkpoint
+        if use_training_encoders:
+            limits = getattr(agent, "_training_observation_space_limits", None)
+            if limits is not None:
+                apply_observation_space_limits(agent, limits)
+
+    _set_random_seeds(random_seed)
+    observations, _ = env.reset(seed=random_seed)
+    terminated = False
+    truncated = False
+    local_step = 0
+    action_records: list[dict[str, Any]] = []
+    reward_records: list[dict[str, Any]] = []
+
+    while not (terminated or truncated):
+        actions = agent.predict(observations, deterministic=True)
+        next_observations, rewards, terminated, truncated, _ = env.step(actions)
+
+        for building, names, values in zip(env.buildings, env.action_names, actions):
+            for name, value in zip(names, values):
+                action_records.append(
+                    {
+                        "time_step_local": local_step,
+                        "time_step_absolute": split_obj.start_time_step + local_step,
+                        "building": building.name,
+                        "action": name,
+                        "value": float(value),
+                    }
+                )
+
+        for building, reward_val in zip(env.buildings, np.atleast_1d(rewards)):
+            reward_records.append(
+                {
+                    "time_step_local": local_step,
+                    "time_step_absolute": split_obj.start_time_step + local_step,
+                    "building": building.name,
+                    "reward": float(reward_val),
+                }
+            )
+
+        observations = next_observations
+        local_step += 1
+
+    kpis = env.evaluate()
+    kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
+    fairness = _fairness_summary(kpis)
+
+    if experiment_label is None:
+        experiment_label = {
+            "carbon": "Carbon-aware MARLISA",
+            "fair_carbon": (
+                "Worst-case fair MARLISA"
+                if fairness_mode == "worst_case"
+                else "Disparity-aware MARLISA"
+                if fairness_mode == "disparity"
+                else "Fair carbon-aware MARLISA"
+            ),
+            "worst_case_fair": "Worst-case fair MARLISA",
+            "disparity_fair": "Disparity-aware MARLISA",
+        }.get(reward, "MARLISA")
+
+    comparison = _comparison_table(kpis, f"{experiment_label} ({split_obj.name})")
+    actions_df = pd.DataFrame(action_records)
+    rewards_df = pd.DataFrame(reward_records)
+    observations_df = observations_dataframe(env)
+
+    if save_results and output_directory is not None:
+        out_dir = Path(output_directory).resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        kpis.to_csv(out_dir / f"{split_obj.name}_kpis.csv", index=False)
+        kpi_table.to_csv(out_dir / f"{split_obj.name}_kpi_table.csv")
+        fairness.to_csv(out_dir / f"{split_obj.name}_fairness_summary.csv", index=False)
+        actions_df.to_csv(out_dir / f"{split_obj.name}_actions.csv", index=False)
+        rewards_df.to_csv(out_dir / f"{split_obj.name}_rewards.csv", index=False)
+        observations_df.to_csv(
+            out_dir / f"{split_obj.name}_observations.csv", index=False
+        )
+
+    return {
+        "env": env,
+        "split": split_obj.name,
+        "actions": actions_df,
+        "rewards": rewards_df,
+        "observations": observations_df,
+        "kpis": kpis,
+        "kpi_table": kpi_table,
+        "fairness": fairness,
+        "comparison": comparison,
+    }
 
 
 def run_marlisa(
@@ -288,64 +628,96 @@ def run_marlisa(
     carbon_weight: float = 1.0,
     comfort_weight: float = 0.25,
     fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
     comfort_band: float = 1.0,
     simulation_end_time_step: int | None = None,
     save_results: bool = True,
     observe_simulated_temperature: bool = False,
     simulate_power_outage: bool | None = None,
+    use_training_encoders: bool = False,
+    pipeline_fixes: bool = False,
+    split: TimeSplit | str = "all",
+    run_test: bool | None = None,
 ) -> dict[str, Any]:
-    """Train MARLISA and evaluate its final deterministic episode.
+    """Train MARLISA and evaluate its performance.
 
-    Three episodes provide the minimum workflow used by the SAC notebook:
-    initial exploration, one learning episode, and deterministic evaluation.
+    When ``split='all'`` (default), trains and evaluates on the complete month.
+    When ``split='train'``, trains on June 1–20 and deterministically evaluates
+    on the held-out test split (June 26–30).
 
-    ``observe_simulated_temperature`` and ``simulate_power_outage=False`` are
-    WP1 environment fixes; their defaults keep the existing behaviour.
+    ``pipeline_fixes`` enables observation of simulated temperatures,
+    training encoder reuse on held-out intervals, and disables power outages.
     """
     if episodes < 3:
         raise ValueError(
             "episodes must be at least 3: exploration, training, and evaluation"
         )
 
+    if pipeline_fixes:
+        observe_simulated_temperature = True
+        use_training_encoders = True
+        if simulate_power_outage is None:
+            simulate_power_outage = False
+
     schema = Path(schema).resolve()
     output_directory = Path(output_directory).resolve()
     if not schema.is_file():
         raise FileNotFoundError(f"CityLearn schema was not found: {schema}")
 
+    is_full_dataset = split == "all" or split is None
+    active_split = (
+        None
+        if is_full_dataset
+        else (get_split(split) if isinstance(split, str) else split)
+    )
+    is_train_split = active_split is not None and active_split.name == "train"
+
+    if run_test is None:
+        run_test = is_train_split
+
     _set_random_seeds(random_seed)
-    env_kwargs: dict[str, Any] = {
-        "schema": schema,
-        "central_agent": False,
-        "random_seed": random_seed,
-        "observe_simulated_temperature": observe_simulated_temperature,
-    }
+
+    env = make_marlisa_env(
+        schema=schema,
+        split=active_split,
+        random_seed=random_seed,
+        reward=reward,
+        carbon_weight=carbon_weight,
+        comfort_weight=comfort_weight,
+        fairness_weight=fairness_weight,
+        worst_case_weight=worst_case_weight,
+        disparity_weight=disparity_weight,
+        fairness_mode=fairness_mode,
+        comfort_band=comfort_band,
+        simulation_end_time_step=simulation_end_time_step,
+        observe_simulated_temperature=observe_simulated_temperature,
+        simulate_power_outage=simulate_power_outage,
+    )
+
+    # Adapt exploration, standardization, and batch size for truncated smoke episodes:
+    episode_transitions = env.time_steps - 1
     if simulation_end_time_step is not None:
-        env_kwargs["simulation_end_time_step"] = simulation_end_time_step
-    if simulate_power_outage is not None:
-        env_kwargs["simulate_power_outage"] = simulate_power_outage
-
-    env = ObservationHistoryCityLearnEnv(**env_kwargs)
-    if reward == "independent_sac":
-        env.reward_function = IndependentSACReward(env.get_metadata())
-    elif reward == "carbon":
-        env.reward_function = CarbonAwareReward(
-            env.get_metadata(), district_shared=False
+        actual_standardize = (
+            standardize_start_time_step
+            if standardize_start_time_step is not None
+            else max(episode_transitions - 1, 2)
         )
-    elif reward == "fair_carbon":
-        env.reward_function = FairCarbonAwareReward(
-            env.get_metadata(),
-            carbon_weight=carbon_weight,
-            comfort_weight=comfort_weight,
-            fairness_weight=fairness_weight,
-            comfort_band=comfort_band,
+        actual_end_exploration = (
+            end_exploration_time_step
+            if end_exploration_time_step is not None
+            else episode_transitions
         )
-    elif reward == "marl":
-        env.reward_function = MARL(env.get_metadata())
-    elif reward != "schema":
-        raise ValueError(f"Unsupported reward choice: {reward}")
-
-    for index, action_space in enumerate(env.action_space):
-        action_space.seed(random_seed + index)
+        actual_batch_size = (
+            min(batch_size, max(episode_transitions - 4, 8))
+            if episode_transitions < batch_size
+            else batch_size
+        )
+    else:
+        actual_standardize = standardize_start_time_step
+        actual_end_exploration = end_exploration_time_step
+        actual_batch_size = batch_size
 
     agent = ComparableMARLISA(
         env,
@@ -354,11 +726,10 @@ def run_marlisa(
         tau=tau,
         alpha=alpha,
         lr=learning_rate,
-        batch_size=batch_size,
+        batch_size=actual_batch_size,
         replay_buffer_capacity=replay_buffer_capacity,
-        standardize_start_time_step=standardize_start_time_step,
-        end_exploration_time_step=end_exploration_time_step,
-        # CityLearn 3.0.2 spells this inherited argument "coefficienct".
+        standardize_start_time_step=actual_standardize,
+        end_exploration_time_step=actual_end_exploration,
         action_scaling_coefficienct=action_scaling_coefficient,
         reward_scaling=reward_scaling,
         update_per_time_step=update_per_time_step,
@@ -375,6 +746,10 @@ def run_marlisa(
         logging_level=30,
     )
 
+    # Store training limits for possible downstream held-out evaluation.
+    training_limits = observation_space_limits(agent)
+    agent._training_observation_space_limits = training_limits
+
     training_rewards = pd.DataFrame(_training_reward_records(env, episodes))
     actions = pd.DataFrame(_final_action_records(agent, env))
     rewards = pd.DataFrame(_final_reward_records(env))
@@ -382,11 +757,26 @@ def run_marlisa(
     kpis = env.evaluate()
     kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
     fairness = _fairness_summary(kpis)
+
     experiment_label = {
         "carbon": "Carbon-aware MARLISA",
-        "fair_carbon": "Fair carbon-aware MARLISA",
+        "fair_carbon": (
+            "Worst-case fair MARLISA"
+            if fairness_mode == "worst_case"
+            else "Disparity-aware MARLISA"
+            if fairness_mode == "disparity"
+            else "Fair carbon-aware MARLISA"
+        ),
+        "worst_case_fair": "Worst-case fair MARLISA",
+        "disparity_fair": "Disparity-aware MARLISA",
     }.get(reward, "MARLISA")
-    comparison = _comparison_table(kpis, experiment_label)
+
+    comp_label = (
+        f"{experiment_label} ({active_split.name})"
+        if active_split is not None
+        else experiment_label
+    )
+    comparison = _comparison_table(kpis, comp_label)
 
     metadata = {
         "controller": "src.run_marlisa.ComparableMARLISA",
@@ -396,6 +786,7 @@ def run_marlisa(
         "citylearn_version": citylearn.__version__,
         "torch_version": torch.__version__,
         "schema": str(schema),
+        "split": active_split.name if active_split is not None else "all",
         "reward_choice": reward,
         "reward_function": type(env.reward_function).__name__,
         "reward_formula": {
@@ -409,7 +800,13 @@ def run_marlisa(
             ),
             "fair_carbon": (
                 "-w_carbon*emissions_i - w_comfort*comfort_loss_i "
-                "- w_fairness*(worst_comfort_loss + comfort_loss_gap)"
+                "- w_worst*worst_loss - w_disp*disparity_loss"
+            ),
+            "worst_case_fair": (
+                "-w_carbon*emissions_i - w_comfort*comfort_loss_i - w_fairness*worst_loss"
+            ),
+            "disparity_fair": (
+                "-w_carbon*emissions_i - w_comfort*comfort_loss_i - w_fairness*disparity_loss"
             ),
         }.get(reward),
         "district_shared_reward": False if reward == "carbon" else None,
@@ -418,16 +815,12 @@ def run_marlisa(
                 "carbon": carbon_weight,
                 "comfort": comfort_weight,
                 "fairness": fairness_weight,
+                "worst_case": worst_case_weight,
+                "disparity": disparity_weight,
+                "fairness_mode": fairness_mode,
                 "comfort_band_celsius": comfort_band,
             }
-            if reward == "fair_carbon"
-            else None
-        ),
-        "fairness_definition": (
-            "At each step, occupied comfort loss is 0 inside the comfort "
-            "band and 1 + degrees outside otherwise. The shared fairness "
-            "term is worst loss plus the worst-best loss gap."
-            if reward == "fair_carbon"
+            if reward in ("fair_carbon", "worst_case_fair", "disparity_fair")
             else None
         ),
         "central_agent": False,
@@ -465,34 +858,58 @@ def run_marlisa(
         "pipeline_options": {
             "observe_simulated_temperature": bool(env.observe_simulated_temperature),
             "simulate_power_outage": bool(env.buildings[0].simulate_power_outage),
+            "use_training_encoders": bool(use_training_encoders),
+            "pipeline_fixes": bool(pipeline_fixes),
         },
-        "comparison_note": (
-            "The SAC hyperparameters match the independent SAC runner. Standard "
-            "MARLISA uses CityLearn's district-coupled MARL reward and adds "
-            "demand estimation and information sharing."
-        ),
-        "evaluation_note": (
-            "The deterministic final episode reuses the same simulation period "
-            "as training and is a development result, not a held-out estimate."
-        ),
+        "has_held_out_test_evaluation": bool(run_test),
     }
 
     if save_results:
         output_directory.mkdir(parents=True, exist_ok=True)
+        prefix = f"{active_split.name}_" if active_split is not None else ""
         training_rewards.to_csv(
-            output_directory / "training_rewards.csv", index=False
+            output_directory / f"{prefix}training_rewards.csv", index=False
         )
-        actions.to_csv(output_directory / "actions.csv", index=False)
-        rewards.to_csv(output_directory / "rewards.csv", index=False)
-        observations.to_csv(output_directory / "observations.csv", index=False)
-        kpis.to_csv(output_directory / "kpis.csv", index=False)
-        kpi_table.to_csv(output_directory / "kpi_table.csv")
-        fairness.to_csv(output_directory / "fairness_summary.csv", index=False)
-        comparison.to_csv(output_directory / "controller_comparison.csv")
+        actions.to_csv(output_directory / f"{prefix}actions.csv", index=False)
+        rewards.to_csv(output_directory / f"{prefix}rewards.csv", index=False)
+        observations.to_csv(
+            output_directory / f"{prefix}observations.csv", index=False
+        )
+        kpis.to_csv(output_directory / f"{prefix}kpis.csv", index=False)
+        kpi_table.to_csv(output_directory / f"{prefix}kpi_table.csv")
+        fairness.to_csv(
+            output_directory / f"{prefix}fairness_summary.csv", index=False
+        )
+        comparison.to_csv(
+            output_directory / f"{prefix}controller_comparison.csv"
+        )
         (output_directory / "metadata.json").write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"
         )
         _save_checkpoint(agent, output_directory / "checkpoint.pt", metadata)
+
+    test_result = None
+    if run_test:
+        test_result = evaluate_marlisa(
+            agent,
+            schema=schema,
+            split=TEST_SPLIT,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            reward=reward,
+            carbon_weight=carbon_weight,
+            comfort_weight=comfort_weight,
+            fairness_weight=fairness_weight,
+            worst_case_weight=worst_case_weight,
+            disparity_weight=disparity_weight,
+            fairness_mode=fairness_mode,
+            comfort_band=comfort_band,
+            save_results=save_results,
+            observe_simulated_temperature=observe_simulated_temperature,
+            use_training_encoders=use_training_encoders,
+            simulate_power_outage=simulate_power_outage,
+            experiment_label=experiment_label,
+        )
 
     return {
         "env": env,
@@ -507,6 +924,7 @@ def run_marlisa(
         "comparison": comparison,
         "metadata": metadata,
         "output_directory": output_directory,
+        "test_result": test_result,
     }
 
 
@@ -526,6 +944,8 @@ def parse_args() -> argparse.Namespace:
             "independent_sac",
             "carbon",
             "fair_carbon",
+            "worst_case_fair",
+            "disparity_fair",
             "marl",
             "schema",
         ),
@@ -540,14 +960,47 @@ def parse_args() -> argparse.Namespace:
         help="Optional shorter end step, useful only for smoke tests.",
     )
     parser.add_argument(
+        "--split",
+        choices=("all", "train", "test", "validation"),
+        default="all",
+        help="Dataset split to train on (default 'all').",
+    )
+    parser.add_argument(
+        "--no-test",
+        action="store_true",
+        help="Skip held-out test split evaluation when training on the train split.",
+    )
+    parser.add_argument(
+        "--fairness-mode",
+        choices=("combined", "worst_case", "disparity"),
+        default="combined",
+        help="Fairness formulation for fair_carbon reward.",
+    )
+    parser.add_argument("--worst-case-weight", type=float, default=None)
+    parser.add_argument("--disparity-weight", type=float, default=None)
+    parser.add_argument("--carbon-weight", type=float, default=1.0)
+    parser.add_argument("--comfort-weight", type=float, default=0.25)
+    parser.add_argument("--fairness-weight", type=float, default=0.25)
+    parser.add_argument("--comfort-band", type=float, default=1.0)
+    parser.add_argument(
         "--observe-simulated-temperature",
         action="store_true",
         help="Agents observe the last simulated indoor temperature (WP1 fix).",
     )
     parser.add_argument(
+        "--training-encoders",
+        action="store_true",
+        help="Scale validation/test inputs with the training-window limits.",
+    )
+    parser.add_argument(
         "--no-power-outages",
         action="store_true",
         help="Disable the schema's power outages (WP1 fix).",
+    )
+    parser.add_argument(
+        "--pipeline-fixes",
+        action="store_true",
+        help="Turn on all environment and observation fixes.",
     )
     return parser.parse_args()
 
@@ -563,11 +1016,25 @@ def main() -> None:
         batch_size=args.batch_size,
         update_per_time_step=args.updates_per_step,
         simulation_end_time_step=args.simulation_end_time_step,
+        split=args.split,
+        run_test=not args.no_test if args.no_test else None,
+        fairness_mode=args.fairness_mode,
+        worst_case_weight=args.worst_case_weight,
+        disparity_weight=args.disparity_weight,
+        carbon_weight=args.carbon_weight,
+        comfort_weight=args.comfort_weight,
+        fairness_weight=args.fairness_weight,
+        comfort_band=args.comfort_band,
         observe_simulated_temperature=args.observe_simulated_temperature,
+        use_training_encoders=args.training_encoders,
         simulate_power_outage=False if args.no_power_outages else None,
+        pipeline_fixes=args.pipeline_fixes,
     )
     print("\nMARLISA evaluation (lower is better for these KPIs):")
     print(result["kpi_table"].round(3).to_string())
+    if result.get("test_result") is not None:
+        print("\nHeld-out test KPIs:")
+        print(result["test_result"]["kpi_table"].round(3).to_string())
     print("\nAvailable controller comparison:")
     print(result["comparison"].round(3).to_string())
     print(f"\nSaved results to: {result['output_directory']}")

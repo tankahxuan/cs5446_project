@@ -74,6 +74,8 @@ pip install -r requirements.txt
 ```shell
 pip install -r requirements-lock.txt          # or: uv pip install -r requirements-lock.txt
 python -m pytest tests/test_rewards.py tests/test_sac_reward.py tests/test_sac_splits.py   # fast checks, about 10 s
+# or run the full test suite (including pipeline fixes and smoke tests):
+python -m pytest
 ```
 
 In VS Code, install the Python and Jupyter extensions, open a notebook, then select **Kernel → Python Environments → .venv**. The virtual environment is excluded from Git by `.gitignore`; each collaborator creates their own.
@@ -92,14 +94,17 @@ Start with [`notebooks/00_Getting_Started.ipynb`](notebooks/00_Getting_Started.i
 | `notebooks/03_MARLISA.ipynb` | Train coordinated MARLISA policies and compare all controllers |
 | `notebooks/04_Carbon_Aware_MARLISA.ipynb` | Train carbon-aware MARLISA and compare all four controllers |
 | `notebooks/05_Fair_Carbon_Aware_MARLISA.ipynb` | Train fair carbon-aware MARLISA and discuss all five controllers |
+| `notebooks/06_agent_evaluation.ipynb` | Compare all controllers with interactive Plotly visualisations |
+| `notebooks/07_pipeline_checks.ipynb` | Multi-controller checks, decoupled fairness verification, and held-out test split evaluation |
 | `src/run_rbc.py` | Reproducible command-line runner for the RBC experiment |
 | `src/run_independent_sac.py` | Reusable independent SAC training and evaluation runner |
 | `src/run_marlisa.py` | Reusable MARLISA training, evaluation, and comparison runner |
 | `src/run_carbon_aware_marlisa.py` | Carbon-aware MARLISA experiment runner |
 | `src/run_fair_carbon_aware_marlisa.py` | Fair carbon-aware MARLISA experiment runner |
+| `src/export_observations.py` | Reconstruct wide observation CSVs from controller actions |
 | `src/rewards.py` | Project-specific carbon reward functions |
-| `dashboard/app.py` | Local Plotly Dash results dashboard |
-| `tests/` | Reward unit tests, split checks and an end-to-end SAC smoke test |
+| `dashboard/app.py` (planned) | Local Plotly Dash results dashboard |
+| `tests/` | Unit tests (rewards, splits, pipeline fixes) and smoke tests (SAC, MARLISA) |
 | `scripts/diagnostics/` | 18 Oct simulator and SAC-input diagnostics (see its README) |
 | `requirements.txt` | Python packages for the project |
 | `requirements-lock.txt` | Exact package versions for reproducible runs |
@@ -116,7 +121,7 @@ Notebooks 00–06 stay as their authors left them, as a record of the work so fa
 | `02_Independent_SAC` | SAC on train/validation/test splits, 1 °C band | Current; one seed |
 | `03_MARLISA` – `05_Fair_Carbon_Aware_MARLISA` | MARLISA variants, trained and scored on all of June, 3 episodes, 2 °C band | Their Independent SAC comparison rows come from the pre-16 Oct electricity-only reward. 04 and 05 expect the old `outputs/independent_sac/` layout. |
 | `06_agent_evaluation` | Plotly comparison of 10-episode runs on all of June | Leaves out SAC unless old-layout SAC outputs exist; comfort charts plot dataset temperatures |
-| `07_pipeline_checks` (planned) | Checks for the corrected pipeline | |
+| `07_pipeline_checks` | Multi-controller checks, decoupled fairness verification, and held-out test split evaluation | Current |
 | `08_results` (planned) | Held-out, multi-seed results | Source of the report's numbers |
 
 ## Rule-based controller
@@ -136,22 +141,32 @@ The experiment uses decentralized control so each building receives its own acti
 Open [`notebooks/02_Independent_SAC.ipynb`](notebooks/02_Independent_SAC.ipynb) for the guided experiment, or run from the command line:
 
 ```shell
+# Basic run:
 python src/run_independent_sac.py --episodes 3
+
+# With pipeline fixes (simulated temperature, training encoders, no outages):
+python src/run_independent_sac.py --episodes 3 --pipeline-fixes
 ```
 
-The default workflow uses one SAC policy per building and CityLearn's `IndependentSACReward`. Episode 1 collects experience, the middle episode(s) train the policies, and the last episode evaluates deterministic actions. Three episodes are useful for checking the pipeline but are not enough for a final research result. Increase the episode count and repeat the experiment across fixed random seeds for reported comparisons.
+The default workflow uses one SAC policy per building and `ElectricityDiscomfortSACReward` (or CityLearn's `IndependentSACReward` via `--reward independent_sac`). Training runs on the June 1–20 split (`TRAIN_SPLIT`), validation on June 21–25 (`VALIDATION_SPLIT`) selects the best checkpoint, and deterministic testing evaluates on the held-out June 26–30 split (`TEST_SPLIT`). Three episodes are useful for checking the pipeline but are not enough for a final research result. Increase the episode count and repeat the experiment across fixed random seeds for reported comparisons.
 
-Results are saved under `outputs/independent_sac/`, including final-episode observations, episode rewards, final actions and rewards, KPI tables, metadata, and a PyTorch checkpoint. The final deterministic episode uses the same 720-step period as training, so these results are for development. A held-out evaluation period should be defined before drawing research conclusions.
+Results are saved under `outputs/independent_sac/`, including validation and held-out test observations, episode rewards, final actions and rewards, KPI tables, metadata, and PyTorch checkpoints.
 
 ## MARLISA
 
 Open [`notebooks/03_MARLISA.ipynb`](notebooks/03_MARLISA.ipynb) for the guided experiment, or run from the command line:
 
 ```shell
+# Basic run:
 python src/run_marlisa.py --episodes 3
+
+# Recommended research run (held-out splits and pipeline fixes):
+python src/run_marlisa.py --episodes 3 --split train --pipeline-fixes
 ```
 
 The default MARLISA run uses CityLearn's district-coupled `MARL` reward. It keeps the same local schema, seed, neural-network sizes, SAC hyperparameters, exploration schedule, and deterministic final evaluation as the independent SAC baseline. This treats each controller and its recommended reward as one complete approach; reward totals therefore must not be compared directly across SAC and MARLISA. MARLISA also adds learned demand estimators, PCA preprocessing, and information-sharing coordination variables. The runner corrects a CityLearn 3.0.2 post-exploration policy-indexing issue so each building uses its own trained policy; this correction is recorded in the run metadata. Results are saved under `outputs/marlisa/`, including a controller comparison table when RBC and independent SAC results are available.
+
+The runner supports held-out splits (`--split train` with automatic held-out test evaluation on `--split test`), as well as `--pipeline-fixes` matching Independent SAC.
 
 ## Carbon-aware MARLISA
 
@@ -160,20 +175,37 @@ Open [`notebooks/04_Carbon_Aware_MARLISA.ipynb`](notebooks/04_Carbon_Aware_MARLI
 Or run the carbon-aware experiment from the command line:
 
 ```shell
+# Basic run:
 python src/run_carbon_aware_marlisa.py --episodes 3
+
+# Recommended research run (held-out splits and pipeline fixes):
+python src/run_carbon_aware_marlisa.py --episodes 3 --split train --pipeline-fixes
 ```
 
-The custom reward is `-max(net_electricity_consumption, 0) * carbon_intensity` for each building and time step. It penalizes grid imports more heavily during carbon-intensive periods and gives no credit for export, consistent with CityLearn's emissions KPI. The only intended change from standard MARLISA is the reward; its controller and training settings are held fixed. Results are stored under `outputs/carbon_aware_marlisa/`.
+The custom reward is `-max(net_electricity_consumption, 0) * carbon_intensity` for each building and time step. It penalizes grid imports more heavily during carbon-intensive periods and gives no credit for export, consistent with CityLearn's emissions KPI. The only intended change from standard MARLISA is the reward; its controller and training settings are held fixed. Like standard MARLISA, the runner supports held-out splits (`--split train` with automatic held-out test evaluation on `--split test`) and pipeline fixes (`--pipeline-fixes`). Results are stored under `outputs/carbon_aware_marlisa/`.
 
 ## Fair carbon-aware MARLISA
 
 Open [`notebooks/05_Fair_Carbon_Aware_MARLISA.ipynb`](notebooks/05_Fair_Carbon_Aware_MARLISA.ipynb) for the complete five-controller comparison and written discussion, or run from the command line:
 
 ```shell
+# Basic run (3 episodes, default combined fairness):
 python src/run_fair_carbon_aware_marlisa.py --episodes 3
+
+# Recommended research runs (held-out splits and pipeline fixes):
+# Proposal RQ1: Worst-case fairness (penalizes max_i L_i)
+python src/run_fair_carbon_aware_marlisa.py --episodes 3 --split train --fairness-mode worst_case --pipeline-fixes
+
+# Proposal RQ2: Disparity-aware fairness (penalizes max_i L_i - min_i L_i)
+python src/run_fair_carbon_aware_marlisa.py --episodes 3 --split train --fairness-mode disparity --pipeline-fixes
 ```
 
-The reward combines local carbon emissions, each building's occupied temperature loss outside a 1°C band, and a shared penalty for the worst current building plus the worst-best comfort gap. Default weights are 1.0 for carbon, 0.25 for local comfort, and 0.25 for fairness. Results and the complete run configuration are saved under `outputs/fair_carbon_aware_marlisa/`.
+The reward combines local carbon emissions, each building's occupied temperature loss outside a 1°C band, and shared fairness penalties. To support the project's research questions, the fairness objective can be configured via `--fairness-mode`:
+- `combined` (default): penalizes both worst building loss and inter-building disparity.
+- `worst_case` (Proposal RQ1): specifically penalizes the worst-off building's discomfort loss ($\max_i L_i$).
+- `disparity` (Proposal RQ2): specifically penalizes the spread in discomfort across buildings ($\max_i L_i - \min_i L_i$).
+
+Custom weights can also be specified directly via `--worst-case-weight` and `--disparity-weight`. Held-out splits (`--split train`) and pipeline fixes (`--pipeline-fixes`) are supported. Results and the complete run configuration are saved under `outputs/fair_carbon_aware_marlisa/`.
 
 ## Dashboard observation data
 
@@ -185,20 +217,27 @@ python src/export_observations.py
 
 The replay utility processes the five canonical controller folders, reconstructs the observation trajectories, and checks that the replayed KPIs match each run's saved KPIs. Pass `--controllers` followed by specific output folder names to process only selected controllers.
 
-## Results dashboard
+## Results dashboard (planned)
 
-The dashboard presents the saved results as a five-stage data story: overall
-outcome, carbon-comfort trade-off, building fairness, time-series evidence, and
-one-day building replay. Install the project requirements and start it from the
-project root:
+A standalone Plotly Dash application (`dashboard/app.py`) is planned to present
+the saved results as a five-stage data story: overall outcome, carbon-comfort trade-off,
+building fairness, time-series evidence, and one-day building replay. In the meantime,
+[`notebooks/06_agent_evaluation.ipynb`](notebooks/06_agent_evaluation.ipynb) provides
+interactive Plotly comparisons across all controllers.
+
+## Pipeline checks
+
+Open [`notebooks/07_pipeline_checks.ipynb`](notebooks/07_pipeline_checks.ipynb) for interactive verification of the held-out splits (June 1–20 train, June 21–25 validation, June 26–30 test), decoupled fairness objectives (Proposal RQ1 & RQ2), and candidate controller environments.
+
+Or run the automated checks directly from the command line:
 
 ```shell
-python dashboard/app.py
-```
+# Fast unit checks (reward formulations, splits, and pipeline fixes):
+python -m pytest tests/test_rewards.py tests/test_marlisa_splits.py -k "not smoke"
 
-Open the local address printed in the terminal. The application reads the
-current canonical controller outputs directly and labels them as development
-evaluations that reuse the training period.
+# End-to-end smoke execution on held-out test splits:
+python -m pytest tests/test_marlisa_splits.py -k smoke
+```
 
 Add experiment code, configurations, and documented results as the project develops. Keep large generated outputs in the ignored `outputs/` or `runs/` folders; commit only the figures and tables needed to reproduce the report.
 
