@@ -70,21 +70,41 @@ class FairCarbonAwareReward(RewardFunction):
         L_i = \mathbb{1}_{occupied}\mathbb{1}_{d_i > 0}(1 + d_i)
 
     where :math:`d_i = \max(|T_i - T_i^{set}| - b, 0)` and ``b`` is the
-    comfort band. The shared fairness term is:
+    comfort band. The shared fairness term can penalize the worst-case
+    discomfort (:math:`\max_i L_i`), inter-building disparity
+    (:math:`\max_i L_i - \min_i L_i`), or both (combined):
 
     .. math::
 
-        F = \max_i L_i + (\max_i L_i - \min_i L_i)
+        F = w_{\text{worst}} \max_i L_i + w_{\text{disp}} (\max_i L_i - \min_i L_i)
 
     Thus, the decentralized reward is:
 
     .. math::
 
-        r_i = -w_c C_i - w_h L_i - w_f F
+        r_i = -w_c C_i - w_h L_i - F
 
-    The first part minimizes local emissions, the second protects each
-    building's occupied comfort, and the shared third part penalizes both the
-    worst current building and inequality between buildings.
+    Parameters
+    ----------
+    env_metadata:
+        CityLearn environment metadata.
+    carbon_weight:
+        Weight on local operational emissions (:math:`w_c`).
+    comfort_weight:
+        Weight on local occupied thermal discomfort (:math:`w_h`).
+    fairness_weight:
+        Base weight on fairness term(s). Used to set ``worst_case_weight``
+        and/or ``disparity_weight`` according to ``fairness_mode`` if those
+        weights are not explicitly given.
+    comfort_band:
+        Allowable deviation from setpoint without penalty (:math:`b`).
+    worst_case_weight:
+        Optional explicit weight on :math:`\max_i L_i`.
+    disparity_weight:
+        Optional explicit weight on :math:`\max_i L_i - \min_i L_i`.
+    fairness_mode:
+        One of ``"combined"`` (default, penalizes both), ``"worst_case"``
+        (Proposal RQ1), or ``"disparity"`` (Proposal RQ2).
     """
 
     def __init__(
@@ -94,17 +114,47 @@ class FairCarbonAwareReward(RewardFunction):
         comfort_weight: float = 0.25,
         fairness_weight: float = 0.25,
         comfort_band: float = 1.0,
+        worst_case_weight: float | None = None,
+        disparity_weight: float | None = None,
+        fairness_mode: str = "combined",
     ) -> None:
         super().__init__(env_metadata)
         self.carbon_weight = float(carbon_weight)
         self.comfort_weight = float(comfort_weight)
         self.fairness_weight = float(fairness_weight)
         self.comfort_band = float(comfort_band)
+        self.fairness_mode = str(fairness_mode).lower()
+
+        if self.fairness_mode not in ("combined", "worst_case", "disparity"):
+            raise ValueError(
+                f"Unknown fairness_mode {fairness_mode!r}. "
+                "Expected 'combined', 'worst_case', or 'disparity'."
+            )
+
+        if worst_case_weight is not None or disparity_weight is not None:
+            self.worst_case_weight = float(
+                worst_case_weight if worst_case_weight is not None else 0.0
+            )
+            self.disparity_weight = float(
+                disparity_weight if disparity_weight is not None else 0.0
+            )
+        else:
+            if self.fairness_mode == "worst_case":
+                self.worst_case_weight = self.fairness_weight
+                self.disparity_weight = 0.0
+            elif self.fairness_mode == "disparity":
+                self.worst_case_weight = 0.0
+                self.disparity_weight = self.fairness_weight
+            else:  # combined
+                self.worst_case_weight = self.fairness_weight
+                self.disparity_weight = self.fairness_weight
 
         for name in (
             "carbon_weight",
             "comfort_weight",
             "fairness_weight",
+            "worst_case_weight",
+            "disparity_weight",
             "comfort_band",
         ):
             if getattr(self, name) < 0.0:
@@ -151,13 +201,17 @@ class FairCarbonAwareReward(RewardFunction):
         comfort_losses = [self._comfort_loss(o) for o in observations]
         worst_loss = max(comfort_losses, default=0.0)
         best_loss = min(comfort_losses, default=0.0)
-        fairness_loss = worst_loss + (worst_loss - best_loss)
+        disparity_loss = worst_loss - best_loss
+        fairness_penalty = (
+            self.worst_case_weight * worst_loss
+            + self.disparity_weight * disparity_loss
+        )
 
         if self.central_agent:
             total_loss = (
                 self.carbon_weight * sum(emissions)
                 + self.comfort_weight * sum(comfort_losses)
-                + self.fairness_weight * fairness_loss
+                + fairness_penalty
             )
             return [-total_loss]
 
@@ -165,7 +219,69 @@ class FairCarbonAwareReward(RewardFunction):
             -(
                 self.carbon_weight * emission
                 + self.comfort_weight * comfort_loss
-                + self.fairness_weight * fairness_loss
+                + fairness_penalty
             )
             for emission, comfort_loss in zip(emissions, comfort_losses)
         ]
+
+
+class WorstCaseFairReward(FairCarbonAwareReward):
+    r"""Reward function that specifically penalizes worst-building discomfort.
+
+    Corresponds to the Worst-Case Fair MARL policy in the project proposal.
+    Sets ``fairness_mode='worst_case'`` so the shared fairness penalty is:
+
+    .. math::
+
+        F_{\text{worst}} = \max_i L_i
+    """
+
+    def __init__(
+        self,
+        env_metadata: Mapping[str, Any],
+        carbon_weight: float = 1.0,
+        comfort_weight: float = 0.25,
+        fairness_weight: float = 0.25,
+        comfort_band: float = 1.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            env_metadata=env_metadata,
+            carbon_weight=carbon_weight,
+            comfort_weight=comfort_weight,
+            fairness_weight=fairness_weight,
+            comfort_band=comfort_band,
+            fairness_mode="worst_case",
+            **kwargs,
+        )
+
+
+class DisparityAwareReward(FairCarbonAwareReward):
+    r"""Reward function that specifically penalizes inter-building discomfort disparity.
+
+    Corresponds to the Disparity-Aware MARL policy in the project proposal.
+    Sets ``fairness_mode='disparity'`` so the shared fairness penalty is:
+
+    .. math::
+
+        F_{\text{disp}} = \max_i L_i - \min_i L_i
+    """
+
+    def __init__(
+        self,
+        env_metadata: Mapping[str, Any],
+        carbon_weight: float = 1.0,
+        comfort_weight: float = 0.25,
+        fairness_weight: float = 0.25,
+        comfort_band: float = 1.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            env_metadata=env_metadata,
+            carbon_weight=carbon_weight,
+            comfort_weight=comfort_weight,
+            fairness_weight=fairness_weight,
+            comfort_band=comfort_band,
+            fairness_mode="disparity",
+            **kwargs,
+        )
