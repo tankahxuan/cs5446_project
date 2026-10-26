@@ -7,6 +7,16 @@ from typing import Any
 
 from citylearn.reward_function import RewardFunction
 
+DEFAULT_FAIRNESS_MODE = "combined"
+
+#: Which fairness terms each mode switches on, as multipliers of
+#: ``fairness_weight``: (worst-case term, disparity term).
+FAIRNESS_MODE_MULTIPLIERS: dict[str, tuple[float, float]] = {
+    "combined": (1.0, 1.0),
+    "worst_case": (1.0, 0.0),
+    "disparity": (0.0, 1.0),
+}
+
 
 class CarbonAwareReward(RewardFunction):
     r"""Penalize operational carbon emissions from grid imports.
@@ -116,38 +126,58 @@ class FairCarbonAwareReward(RewardFunction):
         comfort_band: float = 1.0,
         worst_case_weight: float | None = None,
         disparity_weight: float | None = None,
-        fairness_mode: str = "combined",
+        fairness_mode: str | None = None,
     ) -> None:
         super().__init__(env_metadata)
         self.carbon_weight = float(carbon_weight)
         self.comfort_weight = float(comfort_weight)
         self.fairness_weight = float(fairness_weight)
         self.comfort_band = float(comfort_band)
-        self.fairness_mode = str(fairness_mode).lower()
 
-        if self.fairness_mode not in ("combined", "worst_case", "disparity"):
+        mode_was_given = fairness_mode is not None
+        self.fairness_mode = str(
+            DEFAULT_FAIRNESS_MODE if fairness_mode is None else fairness_mode
+        ).lower()
+
+        if self.fairness_mode not in FAIRNESS_MODE_MULTIPLIERS:
             raise ValueError(
                 f"Unknown fairness_mode {fairness_mode!r}. "
                 "Expected 'combined', 'worst_case', or 'disparity'."
             )
 
-        if worst_case_weight is not None or disparity_weight is not None:
-            self.worst_case_weight = float(
-                worst_case_weight if worst_case_weight is not None else 0.0
+        # The mode fixes which fairness terms are active; an explicit weight
+        # only rescales a term the mode already switches on. A weight that
+        # contradicts the mode is a mistake, not an override, so it is
+        # rejected rather than silently zeroed.
+        worst_multiplier, disparity_multiplier = FAIRNESS_MODE_MULTIPLIERS[
+            self.fairness_mode
+        ]
+        implied = {
+            "worst_case_weight": worst_multiplier * self.fairness_weight,
+            "disparity_weight": disparity_multiplier * self.fairness_weight,
+        }
+        given = {
+            "worst_case_weight": worst_case_weight,
+            "disparity_weight": disparity_weight,
+        }
+
+        for name, value in given.items():
+            if (
+                mode_was_given
+                and value is not None
+                and implied[name] == 0.0
+                and float(value) != 0.0
+            ):
+                raise ValueError(
+                    f"fairness_mode={self.fairness_mode!r} implies {name}=0.0, "
+                    f"but {name}={value!r} was given. Pass a different "
+                    "fairness_mode, or drop the weight."
+                )
+            setattr(
+                self,
+                name,
+                float(implied[name] if value is None else value),
             )
-            self.disparity_weight = float(
-                disparity_weight if disparity_weight is not None else 0.0
-            )
-        else:
-            if self.fairness_mode == "worst_case":
-                self.worst_case_weight = self.fairness_weight
-                self.disparity_weight = 0.0
-            elif self.fairness_mode == "disparity":
-                self.worst_case_weight = 0.0
-                self.disparity_weight = self.fairness_weight
-            else:  # combined
-                self.worst_case_weight = self.fairness_weight
-                self.disparity_weight = self.fairness_weight
 
         for name in (
             "carbon_weight",

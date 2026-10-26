@@ -160,3 +160,33 @@ def test_explicit_fairness_weights_override_mode() -> None:
     # b0: -(1.0 + 0.5 + 0.6) = -2.1, b1: -(0.5 + 0.0 + 0.6) = -1.1
     assert reward.calculate(FAIR_OBSERVATIONS) == pytest.approx([-2.1, -1.1])
 
+
+
+def test_single_explicit_weight_keeps_the_mode_partner() -> None:
+    """An explicit weight rescales one term; it must not zero the other."""
+    reward = FairCarbonAwareReward(
+        {"central_agent": False},
+        fairness_mode="combined",
+        worst_case_weight=0.5,
+    )
+    assert reward.worst_case_weight == pytest.approx(0.5)
+    assert reward.disparity_weight == pytest.approx(0.25)
+
+
+def test_weight_contradicting_the_mode_is_rejected() -> None:
+    with pytest.raises(ValueError, match="implies worst_case_weight=0.0"):
+        FairCarbonAwareReward(
+            {"central_agent": False},
+            fairness_mode="disparity",
+            worst_case_weight=0.5,
+        )
+    with pytest.raises(ValueError, match="implies disparity_weight=0.0"):
+        WorstCaseFairReward({"central_agent": False}, disparity_weight=0.5)
+
+
+def test_zero_weight_matching_the_mode_is_allowed() -> None:
+    reward = DisparityAwareReward(
+        {"central_agent": False}, worst_case_weight=0.0
+    )
+    assert reward.worst_case_weight == pytest.approx(0.0)
+    assert reward.disparity_weight == pytest.approx(0.25)
