@@ -149,34 +149,41 @@ class FairCarbonAwareReward(RewardFunction):
         # only rescales a term the mode already switches on. A weight that
         # contradicts the mode is a mistake, not an override, so it is
         # rejected rather than silently zeroed.
-        worst_multiplier, disparity_multiplier = FAIRNESS_MODE_MULTIPLIERS[
-            self.fairness_mode
-        ]
-        implied = {
-            "worst_case_weight": worst_multiplier * self.fairness_weight,
-            "disparity_weight": disparity_multiplier * self.fairness_weight,
-        }
+        multipliers = dict(
+            zip(
+                ("worst_case_weight", "disparity_weight"),
+                FAIRNESS_MODE_MULTIPLIERS[self.fairness_mode],
+            )
+        )
         given = {
             "worst_case_weight": worst_case_weight,
             "disparity_weight": disparity_weight,
         }
 
         for name, value in given.items():
+            multiplier = multipliers[name]
+            # Only the multiplier says whether the mode switched a term off.
+            # A zero ``fairness_weight`` is just the default scale, so an
+            # explicit weight is still free to raise a term off the floor.
             if (
                 mode_was_given
                 and value is not None
-                and implied[name] == 0.0
+                and multiplier == 0.0
                 and float(value) != 0.0
             ):
                 raise ValueError(
-                    f"fairness_mode={self.fairness_mode!r} implies {name}=0.0, "
-                    f"but {name}={value!r} was given. Pass a different "
-                    "fairness_mode, or drop the weight."
+                    f"fairness_mode={self.fairness_mode!r} switches off "
+                    f"{name}, but {name}={value!r} was given. Pass a "
+                    "different fairness_mode, or drop the weight."
                 )
             setattr(
                 self,
                 name,
-                float(implied[name] if value is None else value),
+                float(
+                    multiplier * self.fairness_weight
+                    if value is None
+                    else value
+                ),
             )
 
         for name in (
