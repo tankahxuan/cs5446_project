@@ -286,6 +286,19 @@ def apply_checkpoint_to_marlisa(
     return agent
 
 
+def _fair_reward_formula(reward_function: Any) -> str:
+    """Describe a fair reward using only the terms it actually applies."""
+    if not isinstance(reward_function, FairCarbonAwareReward):
+        return ""
+
+    terms = ["-w_carbon*emissions_i", "-w_comfort*comfort_loss_i"]
+    if reward_function.worst_case_weight:
+        terms.append("-w_worst*worst_loss")
+    if reward_function.disparity_weight:
+        terms.append("-w_disp*disparity_loss")
+    return " ".join(terms)
+
+
 def _fairness_summary(kpis: pd.DataFrame) -> pd.DataFrame:
     """Summarize the spread in building discomfort for the final episode."""
     values = kpis.loc[
@@ -379,8 +392,16 @@ def make_marlisa_env(
     simulation_end_time_step: int | None = None,
     observe_simulated_temperature: bool = False,
     simulate_power_outage: bool | None = None,
+    include_lstm_warmup: bool = False,
 ) -> ObservationHistoryCityLearnEnv:
-    """Create and configure a CityLearn environment for MARLISA."""
+    """Create and configure a CityLearn environment for MARLISA.
+
+    ``include_lstm_warmup`` starts the episode ``LSTM_LOOKBACK`` steps before
+    the split so building dynamics are warm before the scored interval, as
+    :func:`src.run_independent_sac.make_sac_env` does. The warm-up steps are
+    simulated but must not be scored; ``_marlisa_scored_start`` records the
+    first absolute step that counts, for :func:`compute_split_kpis`.
+    """
     schema = Path(schema).resolve()
     if not schema.is_file():
         raise FileNotFoundError(f"CityLearn schema was not found: {schema}")
@@ -388,10 +409,20 @@ def make_marlisa_env(
     start_step = simulation_start_time_step
     end_step = simulation_end_time_step
 
+    scored_start = None
+
     if split is not None and split != "all":
         split_obj = get_split(split) if isinstance(split, str) else split
+        scored_start = split_obj.start_time_step
         if start_step is None:
-            start_step = split_obj.start_time_step
+            if include_lstm_warmup and split_obj.start_time_step > 0:
+                start_step = warmup_start_time_step(split_obj, LSTM_LOOKBACK)
+                # Earlier starts can trip CityLearn's stochastic outage day
+                # alignment, as noted in the SAC runner.
+                if simulate_power_outage is None:
+                    simulate_power_outage = False
+            else:
+                start_step = split_obj.start_time_step
         if end_step is None:
             end_step = split_obj.end_time_step
 
@@ -442,6 +473,13 @@ def make_marlisa_env(
     for index, action_space in enumerate(env.action_space):
         action_space.seed(random_seed + index)
 
+    env._marlisa_episode_start = int(
+        start_step if start_step is not None else 0
+    )
+    env._marlisa_scored_start = int(
+        scored_start if scored_start is not None else env._marlisa_episode_start
+    )
+
     return env
 
 
@@ -465,6 +503,7 @@ def evaluate_marlisa(
     use_training_encoders: bool = False,
     simulate_power_outage: bool | None = None,
     pipeline_fixes: bool = False,
+    include_lstm_warmup: bool = True,
     experiment_label: str | None = None,
 ) -> dict[str, Any]:
     """Deterministically evaluate a MARLISA policy on a specific dataset split."""
@@ -490,7 +529,10 @@ def evaluate_marlisa(
         comfort_band=comfort_band,
         observe_simulated_temperature=observe_simulated_temperature,
         simulate_power_outage=simulate_power_outage,
+        include_lstm_warmup=include_lstm_warmup,
     )
+    episode_start = env._marlisa_episode_start
+    warmup_steps = max(split_obj.start_time_step - episode_start, 0)
 
     if isinstance(agent_or_checkpoint, (str, Path, dict)):
         checkpoint = (
@@ -533,7 +575,7 @@ def evaluate_marlisa(
                 action_records.append(
                     {
                         "time_step_local": local_step,
-                        "time_step_absolute": split_obj.start_time_step + local_step,
+                        "time_step_absolute": episode_start + local_step,
                         "building": building.name,
                         "action": name,
                         "value": float(value),
@@ -544,7 +586,7 @@ def evaluate_marlisa(
             reward_records.append(
                 {
                     "time_step_local": local_step,
-                    "time_step_absolute": split_obj.start_time_step + local_step,
+                    "time_step_absolute": episode_start + local_step,
                     "building": building.name,
                     "reward": float(reward_val),
                 }
@@ -553,7 +595,13 @@ def evaluate_marlisa(
         observations = next_observations
         local_step += 1
 
-    kpis = env.evaluate()
+    # Score the split only: warm-up steps are simulated but excluded, so the
+    # KPIs line up with the independent SAC runner's held-out numbers.
+    kpis = compute_split_kpis(
+        env,
+        scored_start_absolute=split_obj.start_time_step,
+        comfort_band=comfort_band,
+    )
     kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
     fairness = _fairness_summary(kpis)
 
@@ -591,6 +639,9 @@ def evaluate_marlisa(
     return {
         "env": env,
         "split": split_obj.name,
+        "include_lstm_warmup": include_lstm_warmup,
+        "warmup_steps": warmup_steps,
+        "scored_transitions": max(local_step - warmup_steps, 0),
         "actions": actions_df,
         "rewards": rewards_df,
         "observations": observations_df,
@@ -798,29 +849,24 @@ def run_marlisa(
             "carbon": (
                 "-max(net_electricity_consumption, 0) * carbon_intensity"
             ),
-            "fair_carbon": (
-                "-w_carbon*emissions_i - w_comfort*comfort_loss_i "
-                "- w_worst*worst_loss - w_disp*disparity_loss"
-            ),
-            "worst_case_fair": (
-                "-w_carbon*emissions_i - w_comfort*comfort_loss_i - w_fairness*worst_loss"
-            ),
-            "disparity_fair": (
-                "-w_carbon*emissions_i - w_comfort*comfort_loss_i - w_fairness*disparity_loss"
-            ),
+            "fair_carbon": _fair_reward_formula(env.reward_function),
+            "worst_case_fair": _fair_reward_formula(env.reward_function),
+            "disparity_fair": _fair_reward_formula(env.reward_function),
         }.get(reward),
         "district_shared_reward": False if reward == "carbon" else None,
+        # Read back from the reward function so the record is the objective
+        # that ran, not the arguments that were requested.
         "reward_weights": (
             {
-                "carbon": carbon_weight,
-                "comfort": comfort_weight,
-                "fairness": fairness_weight,
-                "worst_case": worst_case_weight,
-                "disparity": disparity_weight,
-                "fairness_mode": fairness_mode,
-                "comfort_band_celsius": comfort_band,
+                "carbon": env.reward_function.carbon_weight,
+                "comfort": env.reward_function.comfort_weight,
+                "fairness": env.reward_function.fairness_weight,
+                "worst_case": env.reward_function.worst_case_weight,
+                "disparity": env.reward_function.disparity_weight,
+                "fairness_mode": env.reward_function.fairness_mode,
+                "comfort_band_celsius": env.reward_function.comfort_band,
             }
-            if reward in ("fair_carbon", "worst_case_fair", "disparity_fair")
+            if isinstance(env.reward_function, FairCarbonAwareReward)
             else None
         ),
         "central_agent": False,

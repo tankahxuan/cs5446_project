@@ -99,3 +99,50 @@ def test_marlisa_smoke_train_and_test(tmp_path: Path) -> None:
     assert result["metadata"]["reward_weights"]["fairness_mode"] == "worst_case"
     assert (tmp_path / "marlisa_smoke" / "train_kpis.csv").is_file()
     assert (tmp_path / "marlisa_smoke" / "checkpoint.pt").is_file()
+
+
+def test_evaluation_env_warms_up_but_scores_only_the_split() -> None:
+    """Held-out MARLISA evaluation must match the SAC runner's warm-up."""
+    from src.dataset_splits import LSTM_LOOKBACK
+
+    cold = make_marlisa_env(schema=SCHEMA, split=TEST_SPLIT)
+    warm = make_marlisa_env(schema=SCHEMA, split=TEST_SPLIT, include_lstm_warmup=True)
+
+    assert cold._marlisa_episode_start == TEST_SPLIT.start_time_step
+    assert warm._marlisa_episode_start == TEST_SPLIT.start_time_step - LSTM_LOOKBACK
+    # Both score the same interval; only the simulated run-up differs.
+    assert cold._marlisa_scored_start == warm._marlisa_scored_start
+    assert warm._marlisa_scored_start == TEST_SPLIT.start_time_step
+    assert warm.time_steps == cold.time_steps + LSTM_LOOKBACK
+
+
+def test_train_split_is_not_warmed_up() -> None:
+    """The train split starts at step 0, so no earlier data exists."""
+    env = make_marlisa_env(schema=SCHEMA, split=TRAIN_SPLIT, include_lstm_warmup=True)
+    assert env._marlisa_episode_start == TRAIN_SPLIT.start_time_step == 0
+
+
+def test_reward_metadata_records_the_objective_that_ran(tmp_path: Path) -> None:
+    import json
+
+    result = run_marlisa(
+        schema=SCHEMA,
+        output_directory=tmp_path / "disparity",
+        episodes=3,
+        random_seed=42,
+        batch_size=32,
+        reward="disparity_fair",
+        split="train",
+        simulation_end_time_step=47,
+        run_test=False,
+        save_results=True,
+    )
+    weights = json.loads(
+        (tmp_path / "disparity" / "metadata.json").read_text(encoding="utf-8")
+    )["reward_weights"]
+
+    assert weights["fairness_mode"] == "disparity"
+    assert weights["worst_case"] == pytest.approx(0.0)
+    assert weights["disparity"] == pytest.approx(0.25)
+    assert "disparity_loss" in result["metadata"]["reward_formula"]
+    assert "worst_loss" not in result["metadata"]["reward_formula"]

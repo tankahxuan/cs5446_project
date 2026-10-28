@@ -160,3 +160,48 @@ def test_explicit_fairness_weights_override_mode() -> None:
     # b0: -(1.0 + 0.5 + 0.6) = -2.1, b1: -(0.5 + 0.0 + 0.6) = -1.1
     assert reward.calculate(FAIR_OBSERVATIONS) == pytest.approx([-2.1, -1.1])
 
+
+
+def test_single_explicit_weight_keeps_the_mode_partner() -> None:
+    """An explicit weight rescales one term; it must not zero the other."""
+    reward = FairCarbonAwareReward(
+        {"central_agent": False},
+        fairness_mode="combined",
+        worst_case_weight=0.5,
+    )
+    assert reward.worst_case_weight == pytest.approx(0.5)
+    assert reward.disparity_weight == pytest.approx(0.25)
+
+
+def test_weight_contradicting_the_mode_is_rejected() -> None:
+    with pytest.raises(ValueError, match="switches off worst_case_weight"):
+        FairCarbonAwareReward(
+            {"central_agent": False},
+            fairness_mode="disparity",
+            worst_case_weight=0.5,
+        )
+    with pytest.raises(ValueError, match="switches off disparity_weight"):
+        WorstCaseFairReward({"central_agent": False}, disparity_weight=0.5)
+
+
+def test_zero_fairness_weight_does_not_contradict_combined_mode() -> None:
+    """Only the mode switches a term off; fairness_weight only scales it."""
+    reward = FairCarbonAwareReward(
+        {"central_agent": False},
+        fairness_mode="combined",
+        fairness_weight=0.0,
+        disparity_weight=0.4,
+    )
+    assert reward.worst_case_weight == pytest.approx(0.0)
+    assert reward.disparity_weight == pytest.approx(0.4)
+    # Only the disparity term is scaled up: penalty = 0.0 * 2.0 + 0.4 * 2.0.
+    # b0: -(1.0 + 0.5 + 0.8) = -2.3, b1: -(0.5 + 0.0 + 0.8) = -1.3
+    assert reward.calculate(FAIR_OBSERVATIONS) == pytest.approx([-2.3, -1.3])
+
+
+def test_zero_weight_matching_the_mode_is_allowed() -> None:
+    reward = DisparityAwareReward(
+        {"central_agent": False}, worst_case_weight=0.0
+    )
+    assert reward.worst_case_weight == pytest.approx(0.0)
+    assert reward.disparity_weight == pytest.approx(0.25)
