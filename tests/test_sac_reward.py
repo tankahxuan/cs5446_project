@@ -12,7 +12,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.dataset_splits import TRAIN_SPLIT
+from src.rewards import CarbonAwareReward, FairCarbonAwareReward
+from src.run_independent_sac import (
+    make_sac_agent,
+    make_sac_env,
+)
 from src.sac_reward import ElectricityDiscomfortSACReward
+
+SCHEMA = PROJECT_ROOT / "notebooks" / "data" / "schema.json"
 
 
 def _obs(**overrides):
@@ -146,3 +154,84 @@ def test_components_sum_to_total(reward_fn):
     assert component["reward"] == pytest.approx(
         -(component["electricity_penalty"] + component["discomfort_penalty"])
     )
+
+
+def test_make_sac_env_carbon_reward():
+    env = make_sac_env(SCHEMA, TRAIN_SPLIT, random_seed=42, reward="carbon")
+    assert isinstance(env.reward_function, CarbonAwareReward)
+    assert env.reward_function.district_shared is False
+
+
+def test_make_sac_env_fair_carbon_modes():
+    # Test worst_case mode
+    env_wc = make_sac_env(
+        SCHEMA,
+        TRAIN_SPLIT,
+        random_seed=42,
+        reward="fair_carbon",
+        fairness_mode="worst_case",
+        fairness_weight=0.35,
+    )
+    assert isinstance(env_wc.reward_function, FairCarbonAwareReward)
+    assert env_wc.reward_function.worst_case_weight == pytest.approx(0.35)
+    assert env_wc.reward_function.disparity_weight == pytest.approx(0.0)
+
+    # Test disparity mode
+    env_disp = make_sac_env(
+        SCHEMA,
+        TRAIN_SPLIT,
+        random_seed=42,
+        reward="fair_carbon",
+        fairness_mode="disparity",
+        fairness_weight=0.45,
+    )
+    assert isinstance(env_disp.reward_function, FairCarbonAwareReward)
+    assert env_disp.reward_function.worst_case_weight == pytest.approx(0.0)
+    assert env_disp.reward_function.disparity_weight == pytest.approx(0.45)
+
+    # Test shortcut aliases
+    env_shortcut_wc = make_sac_env(SCHEMA, TRAIN_SPLIT, random_seed=42, reward="worst_case_fair")
+    assert env_shortcut_wc.reward_function.worst_case_weight == pytest.approx(0.25)
+    assert env_shortcut_wc.reward_function.disparity_weight == pytest.approx(0.0)
+
+    env_shortcut_disp = make_sac_env(SCHEMA, TRAIN_SPLIT, random_seed=42, reward="disparity_fair")
+    assert env_shortcut_disp.reward_function.worst_case_weight == pytest.approx(0.0)
+    assert env_shortcut_disp.reward_function.disparity_weight == pytest.approx(0.25)
+
+
+def test_sac_fair_carbon_step_and_gradient_update():
+    """Verify that an Independent SAC agent can step and update under FairCarbonAwareReward."""
+    env = make_sac_env(
+        SCHEMA,
+        TRAIN_SPLIT,
+        random_seed=42,
+        reward="fair_carbon",
+        fairness_mode="combined",
+        fairness_weight=0.25,
+    )
+    agent = make_sac_agent(
+        env,
+        batch_size=8,
+        hidden_dimension=(32, 32),
+        standardize_start_time_step=8,
+        end_exploration_time_step=10,
+    )
+    observations, _ = env.reset()
+
+    for _ in range(15):
+        actions = agent.predict(observations, deterministic=False)
+        next_observations, rewards, terminated, truncated, _ = env.step(actions)
+        assert len(rewards) == len(env.buildings)
+        assert all(math.isfinite(r) for r in rewards)
+
+        agent.update(
+            observations,
+            actions,
+            rewards,
+            next_observations,
+            terminated=terminated,
+            truncated=truncated,
+        )
+        observations = next_observations
+
+    assert agent.gradient_updates > 0
