@@ -14,7 +14,7 @@ import json
 import random
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import citylearn
 import numpy as np
@@ -42,6 +42,12 @@ try:
     from src.observation_scaling import (
         apply_observation_space_limits,
         observation_space_limits,
+    )
+    from src.rewards import (
+        CarbonAwareReward,
+        DisparityAwareReward,
+        FairCarbonAwareReward,
+        WorstCaseFairReward,
     )
     from src.sac_reward import (
         DEFAULT_COMFORT_BAND,
@@ -72,6 +78,12 @@ except ModuleNotFoundError:
     from observation_scaling import (
         apply_observation_space_limits,
         observation_space_limits,
+    )
+    from rewards import (
+        CarbonAwareReward,
+        DisparityAwareReward,
+        FairCarbonAwareReward,
+        WorstCaseFairReward,
     )
     from sac_reward import (
         DEFAULT_COMFORT_BAND,
@@ -106,7 +118,34 @@ DEFAULT_TRAINING_EPISODES = 50
 DEFAULT_VALIDATION_EVERY = 5
 DEFAULT_DISCOMFORT_THRESHOLD = 0.20
 
-RewardChoice = Literal["electricity_discomfort", "independent_sac", "schema"]
+RewardChoice = Literal[
+    "electricity_discomfort",
+    "independent_sac",
+    "carbon",
+    "fair_carbon",
+    "worst_case_fair",
+    "disparity_fair",
+    "schema",
+]
+
+
+class RewardKwargs(TypedDict, total=False):
+    """Structured, type-safe keyword arguments for CityLearn reward functions."""
+
+    lambda_electricity: float
+    lambda_discomfort: float
+    electricity_scale: float
+    discomfort_scale: float
+    band: float
+    comfort_band: float
+    lower_exponent: float
+    higher_exponent: float
+    carbon_weight: float
+    comfort_weight: float
+    fairness_weight: float
+    worst_case_weight: float | None
+    disparity_weight: float | None
+    fairness_mode: Literal["combined", "worst_case", "disparity"]
 
 
 def _set_random_seeds(seed: int) -> None:
@@ -268,22 +307,35 @@ class CountingSAC(SAC):
 
 
 def _reward_kwargs(
-    lambda_electricity: float,
-    lambda_discomfort: float,
-    electricity_scale: float,
-    discomfort_scale: float,
-    comfort_band: float,
-    lower_exponent: float,
-    higher_exponent: float,
-) -> dict[str, float]:
+    lambda_electricity: float = DEFAULT_LAMBDA_E,
+    lambda_discomfort: float = DEFAULT_LAMBDA_D,
+    electricity_scale: float = DEFAULT_ELECTRICITY_SCALE,
+    discomfort_scale: float = DEFAULT_DISCOMFORT_SCALE,
+    comfort_band: float = DEFAULT_COMFORT_BAND,
+    lower_exponent: float = DEFAULT_LOWER_EXPONENT,
+    higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+) -> RewardKwargs:
     return {
         "lambda_electricity": lambda_electricity,
         "lambda_discomfort": lambda_discomfort,
         "electricity_scale": electricity_scale,
         "discomfort_scale": discomfort_scale,
         "band": comfort_band,
+        "comfort_band": comfort_band,
         "lower_exponent": lower_exponent,
         "higher_exponent": higher_exponent,
+        "carbon_weight": carbon_weight,
+        "comfort_weight": comfort_weight,
+        "fairness_weight": fairness_weight,
+        "worst_case_weight": worst_case_weight,
+        "disparity_weight": disparity_weight,
+        "fairness_mode": fairness_mode,
     }
 
 
@@ -293,7 +345,14 @@ def make_sac_env(
     *,
     random_seed: int,
     reward: RewardChoice = "electricity_discomfort",
-    reward_kwargs: dict[str, float] | None = None,
+    reward_kwargs: RewardKwargs | None = None,
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    comfort_band: float = DEFAULT_COMFORT_BAND,
     include_lstm_warmup: bool = False,
     simulate_power_outage: bool | None = None,
     observe_simulated_temperature: bool = False,
@@ -301,7 +360,17 @@ def make_sac_env(
     """Create a decentralized CityLearn env for one dataset split."""
     split = get_split(split) if isinstance(split, str) else split
     schema = Path(schema).resolve()
-    reward_kwargs = dict(reward_kwargs or {})
+    merged_reward_kwargs: RewardKwargs = dict(reward_kwargs or {})  # type: ignore[assignment]
+
+    # Set defaults from explicit arguments if not already present in reward_kwargs
+    merged_reward_kwargs.setdefault("carbon_weight", carbon_weight)
+    merged_reward_kwargs.setdefault("comfort_weight", comfort_weight)
+    merged_reward_kwargs.setdefault("fairness_weight", fairness_weight)
+    merged_reward_kwargs.setdefault("worst_case_weight", worst_case_weight)
+    merged_reward_kwargs.setdefault("disparity_weight", disparity_weight)
+    merged_reward_kwargs.setdefault("fairness_mode", fairness_mode)
+    merged_reward_kwargs.setdefault("comfort_band", comfort_band)
+    merged_reward_kwargs.setdefault("band", comfort_band)
 
     if include_lstm_warmup and split.start_time_step > 0:
         start = warmup_start_time_step(split, LSTM_LOOKBACK)
@@ -330,7 +399,42 @@ def make_sac_env(
     if reward in ("electricity_discomfort", "independent_sac"):
         env.reward_function = ElectricityDiscomfortSACReward(
             env.get_metadata(),
-            **reward_kwargs,
+            **merged_reward_kwargs,
+        )
+    elif reward == "carbon":
+        env.reward_function = CarbonAwareReward(
+            env.get_metadata(), district_shared=False
+        )
+    elif reward in ("fair_carbon", "worst_case_fair", "disparity_fair"):
+        resolved_mode = (
+            "worst_case"
+            if reward == "worst_case_fair"
+            else "disparity"
+            if reward == "disparity_fair"
+            else merged_reward_kwargs.get("fairness_mode", fairness_mode)
+        )
+        env.reward_function = FairCarbonAwareReward(
+            env.get_metadata(),
+            carbon_weight=float(merged_reward_kwargs.get("carbon_weight", 1.0)),
+            comfort_weight=float(merged_reward_kwargs.get("comfort_weight", 0.25)),
+            fairness_weight=float(merged_reward_kwargs.get("fairness_weight", 0.25)),
+            worst_case_weight=(
+                None
+                if merged_reward_kwargs.get("worst_case_weight") is None
+                else float(merged_reward_kwargs["worst_case_weight"])
+            ),
+            disparity_weight=(
+                None
+                if merged_reward_kwargs.get("disparity_weight") is None
+                else float(merged_reward_kwargs["disparity_weight"])
+            ),
+            fairness_mode=resolved_mode,
+            comfort_band=float(
+                merged_reward_kwargs.get(
+                    "comfort_band",
+                    merged_reward_kwargs.get("band", DEFAULT_COMFORT_BAND),
+                )
+            ),
         )
     elif reward != "schema":
         raise ValueError(f"Unsupported reward choice: {reward}")
@@ -706,7 +810,7 @@ def evaluate_independent_sac(
     metadata = dict(checkpoint.get("metadata", {}))
     split = get_split(split) if isinstance(split, str) else split
     random_seed = int(metadata.get("random_seed", 42))
-    reward_config = dict(metadata.get("reward_config", {}))
+    reward_config: RewardKwargs = dict(metadata.get("reward_config", {}))  # type: ignore[assignment]
     hyper = dict(metadata.get("hyperparameters", {}))
     options = dict(metadata.get("pipeline_options", {}))
     if observe_simulated_temperature is None:
@@ -717,12 +821,13 @@ def evaluate_independent_sac(
     # enabled on an env that starts at a warm-up step.
     simulate_power_outage = False if options.get("simulate_power_outage") is False else None
 
+    reward_choice = metadata.get("reward_choice", "electricity_discomfort")
     _set_random_seeds(random_seed)
     env = make_sac_env(
         schema,
         split,
         random_seed=random_seed,
-        reward="electricity_discomfort",
+        reward=reward_choice,
         reward_kwargs=reward_config,
         include_lstm_warmup=include_lstm_warmup,
         simulate_power_outage=simulate_power_outage,
@@ -1074,6 +1179,12 @@ def train_independent_sac(
     comfort_band: float = DEFAULT_COMFORT_BAND,
     lower_exponent: float = DEFAULT_LOWER_EXPONENT,
     higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
     validation_every: int = DEFAULT_VALIDATION_EVERY,
     discomfort_threshold: float = DEFAULT_DISCOMFORT_THRESHOLD,
     include_lstm_warmup: bool = True,
@@ -1109,14 +1220,20 @@ def train_independent_sac(
     if save_results:
         checkpoint_directory.mkdir(parents=True, exist_ok=True)
 
-    reward_config = _reward_kwargs(
-        lambda_electricity,
-        lambda_discomfort,
-        electricity_scale,
-        discomfort_scale,
-        comfort_band,
-        lower_exponent,
-        higher_exponent,
+    reward_config: RewardKwargs = _reward_kwargs(
+        lambda_electricity=lambda_electricity,
+        lambda_discomfort=lambda_discomfort,
+        electricity_scale=electricity_scale,
+        discomfort_scale=discomfort_scale,
+        comfort_band=comfort_band,
+        lower_exponent=lower_exponent,
+        higher_exponent=higher_exponent,
+        carbon_weight=carbon_weight,
+        comfort_weight=comfort_weight,
+        fairness_weight=fairness_weight,
+        worst_case_weight=worst_case_weight,
+        disparity_weight=disparity_weight,
+        fairness_mode=fairness_mode,
     )
 
     _log(
@@ -1450,6 +1567,13 @@ def run_independent_sac(
     end_exploration_time_step: int | None = None,
     simulation_end_time_step: int | None = None,
     save_results: bool = True,
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    comfort_band: float = DEFAULT_COMFORT_BAND,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Public entry point used by the notebook and CLI.
@@ -1505,6 +1629,13 @@ def run_independent_sac(
             end_exploration_time_step=end_exploration,
             train_split=train_split,
             save_results=save_results,
+            carbon_weight=carbon_weight,
+            comfort_weight=comfort_weight,
+            fairness_weight=fairness_weight,
+            worst_case_weight=worst_case_weight,
+            disparity_weight=disparity_weight,
+            fairness_mode=fairness_mode,
+            comfort_band=comfort_band,
             **kwargs,
         )
 
@@ -1527,6 +1658,13 @@ def run_independent_sac(
         standardize_start_time_step=standardize,
         end_exploration_time_step=end_exploration,
         save_results=save_results,
+        carbon_weight=carbon_weight,
+        comfort_weight=comfort_weight,
+        fairness_weight=fairness_weight,
+        worst_case_weight=worst_case_weight,
+        disparity_weight=disparity_weight,
+        fairness_mode=fairness_mode,
+        comfort_band=comfort_band,
         **kwargs,
     )
 
@@ -1559,6 +1697,12 @@ def _run_smoke_training(
     comfort_band: float = DEFAULT_COMFORT_BAND,
     lower_exponent: float = DEFAULT_LOWER_EXPONENT,
     higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
+    carbon_weight: float = 1.0,
+    comfort_weight: float = 0.25,
+    fairness_weight: float = 0.25,
+    worst_case_weight: float | None = None,
+    disparity_weight: float | None = None,
+    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
     include_lstm_warmup: bool = True,
     observe_simulated_temperature: bool = False,
     use_training_encoders: bool = False,
@@ -1576,14 +1720,20 @@ def _run_smoke_training(
     seed_directory = output_directory / f"seed_{random_seed}" / "smoke"
     seed_directory.mkdir(parents=True, exist_ok=True)
 
-    reward_config = _reward_kwargs(
-        lambda_electricity,
-        lambda_discomfort,
-        electricity_scale,
-        discomfort_scale,
-        comfort_band,
-        lower_exponent,
-        higher_exponent,
+    reward_config: RewardKwargs = _reward_kwargs(
+        lambda_electricity=lambda_electricity,
+        lambda_discomfort=lambda_discomfort,
+        electricity_scale=electricity_scale,
+        discomfort_scale=discomfort_scale,
+        comfort_band=comfort_band,
+        lower_exponent=lower_exponent,
+        higher_exponent=higher_exponent,
+        carbon_weight=carbon_weight,
+        comfort_weight=comfort_weight,
+        fairness_weight=fairness_weight,
+        worst_case_weight=worst_case_weight,
+        disparity_weight=disparity_weight,
+        fairness_mode=fairness_mode,
     )
     _set_random_seeds(random_seed)
     env = make_sac_env(
@@ -1728,8 +1878,58 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--reward",
-        choices=("electricity_discomfort", "independent_sac", "schema"),
+        choices=(
+            "electricity_discomfort",
+            "independent_sac",
+            "carbon",
+            "fair_carbon",
+            "worst_case_fair",
+            "disparity_fair",
+            "schema",
+        ),
         default="electricity_discomfort",
+    )
+    parser.add_argument(
+        "--fairness-mode",
+        choices=("combined", "worst_case", "disparity"),
+        default="combined",
+        help="Fairness formulation for fair_carbon reward.",
+    )
+    parser.add_argument(
+        "--worst-case-weight",
+        type=float,
+        default=None,
+        help="Explicit weight on worst-building discomfort (overrides fairness-mode).",
+    )
+    parser.add_argument(
+        "--disparity-weight",
+        type=float,
+        default=None,
+        help="Explicit weight on building discomfort disparity (overrides fairness-mode).",
+    )
+    parser.add_argument(
+        "--carbon-weight",
+        type=float,
+        default=1.0,
+        help="Weight on operational carbon emissions.",
+    )
+    parser.add_argument(
+        "--comfort-weight",
+        type=float,
+        default=0.25,
+        help="Weight on local thermal discomfort.",
+    )
+    parser.add_argument(
+        "--fairness-weight",
+        type=float,
+        default=0.25,
+        help="Base weight for active fairness terms in fair_carbon reward.",
+    )
+    parser.add_argument(
+        "--comfort-band",
+        type=float,
+        default=DEFAULT_COMFORT_BAND,
+        help="Bandwidth (+/- deg C) around setpoint with zero discomfort penalty.",
     )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--updates-per-step", type=int, default=1)
@@ -1807,6 +2007,13 @@ def main() -> None:
             discomfort_threshold=args.discomfort_threshold,
             lambda_electricity=args.lambda_electricity,
             lambda_discomfort=args.lambda_discomfort,
+            carbon_weight=args.carbon_weight,
+            comfort_weight=args.comfort_weight,
+            fairness_weight=args.fairness_weight,
+            worst_case_weight=args.worst_case_weight,
+            disparity_weight=args.disparity_weight,
+            fairness_mode=args.fairness_mode,
+            comfort_band=args.comfort_band,
             simulation_end_time_step=args.simulation_end_time_step,
             run_test=not args.no_test,
             observe_simulated_temperature=(
