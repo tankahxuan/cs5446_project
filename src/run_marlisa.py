@@ -42,10 +42,10 @@ try:
         observation_space_limits,
     )
     from src.rewards import (
-        CarbonAwareReward,
         DisparityAwareReward,
         FairCarbonAwareReward,
         WorstCaseFairReward,
+        build_carbon_reward,
     )
     from src.run_independent_sac import (
         _final_action_records,
@@ -76,10 +76,10 @@ except ModuleNotFoundError:
         observation_space_limits,
     )
     from rewards import (
-        CarbonAwareReward,
         DisparityAwareReward,
         FairCarbonAwareReward,
         WorstCaseFairReward,
+        build_carbon_reward,
     )
     from run_independent_sac import (
         _final_action_records,
@@ -386,7 +386,7 @@ def make_marlisa_env(
     fairness_weight: float = 0.25,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
     comfort_band: float = 1.0,
     simulation_start_time_step: int | None = None,
     simulation_end_time_step: int | None = None,
@@ -443,27 +443,19 @@ def make_marlisa_env(
 
     if reward == "independent_sac":
         env.reward_function = IndependentSACReward(env.get_metadata())
-    elif reward == "carbon":
-        env.reward_function = CarbonAwareReward(
-            env.get_metadata(), district_shared=False
-        )
-    elif reward in ("fair_carbon", "worst_case_fair", "disparity_fair"):
-        resolved_mode = (
-            "worst_case"
-            if reward == "worst_case_fair"
-            else "disparity"
-            if reward == "disparity_fair"
-            else fairness_mode
-        )
-        env.reward_function = FairCarbonAwareReward(
+    elif reward in ("carbon", "fair_carbon", "worst_case_fair", "disparity_fair"):
+        env.reward_function = build_carbon_reward(
+            reward,
             env.get_metadata(),
-            carbon_weight=carbon_weight,
-            comfort_weight=comfort_weight,
-            fairness_weight=fairness_weight,
-            worst_case_weight=worst_case_weight,
-            disparity_weight=disparity_weight,
-            fairness_mode=resolved_mode,
-            comfort_band=comfort_band,
+            {
+                "carbon_weight": carbon_weight,
+                "comfort_weight": comfort_weight,
+                "fairness_weight": fairness_weight,
+                "worst_case_weight": worst_case_weight,
+                "disparity_weight": disparity_weight,
+                "fairness_mode": fairness_mode,
+                "comfort_band": comfort_band,
+            },
         )
     elif reward == "marl":
         env.reward_function = MARL(env.get_metadata())
@@ -496,7 +488,7 @@ def evaluate_marlisa(
     fairness_weight: float = 0.25,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
     comfort_band: float = 1.0,
     save_results: bool = True,
     observe_simulated_temperature: bool = False,
@@ -681,7 +673,7 @@ def run_marlisa(
     fairness_weight: float = 0.25,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
     comfort_band: float = 1.0,
     simulation_end_time_step: int | None = None,
     save_results: bool = True,
@@ -1019,8 +1011,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fairness-mode",
         choices=("combined", "worst_case", "disparity"),
-        default="combined",
-        help="Fairness formulation for fair_carbon reward.",
+        default=None,
+        help=(
+            "Fairness formulation for fair_carbon (default: combined). "
+            "worst_case_fair and disparity_fair fix their own mode and reject "
+            "a different one."
+        ),
     )
     parser.add_argument("--worst-case-weight", type=float, default=None)
     parser.add_argument("--disparity-weight", type=float, default=None)

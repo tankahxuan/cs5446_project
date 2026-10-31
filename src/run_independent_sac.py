@@ -1,8 +1,9 @@
 """Train and evaluate independent CityLearn SAC agents with held-out splits.
 
 Training uses only June 1–20 (steps 0–479). Validation (June 21–25) selects
-checkpoints. Testing (June 26–30) is a final held-out report. The reward
-penalizes electricity imports and occupied thermal discomfort only.
+checkpoints. Testing (June 26–30) is a final held-out report. The default
+reward penalizes electricity imports and occupied thermal discomfort; ``--reward``
+also selects the carbon-aware and fairness-aware variants.
 
 This module preserves helper functions imported by ``run_marlisa.py``.
 """
@@ -44,10 +45,11 @@ try:
         observation_space_limits,
     )
     from src.rewards import (
-        CarbonAwareReward,
-        DisparityAwareReward,
-        FairCarbonAwareReward,
-        WorstCaseFairReward,
+        DEFAULT_CARBON_WEIGHT,
+        DEFAULT_COMFORT_WEIGHT,
+        DEFAULT_FAIRNESS_WEIGHT,
+        build_carbon_reward,
+        resolve_fairness_mode,
     )
     from src.sac_reward import (
         DEFAULT_COMFORT_BAND,
@@ -80,10 +82,11 @@ except ModuleNotFoundError:
         observation_space_limits,
     )
     from rewards import (
-        CarbonAwareReward,
-        DisparityAwareReward,
-        FairCarbonAwareReward,
-        WorstCaseFairReward,
+        DEFAULT_CARBON_WEIGHT,
+        DEFAULT_COMFORT_WEIGHT,
+        DEFAULT_FAIRNESS_WEIGHT,
+        build_carbon_reward,
+        resolve_fairness_mode,
     )
     from sac_reward import (
         DEFAULT_COMFORT_BAND,
@@ -145,7 +148,40 @@ class RewardKwargs(TypedDict, total=False):
     fairness_weight: float
     worst_case_weight: float | None
     disparity_weight: float | None
-    fairness_mode: Literal["combined", "worst_case", "disparity"]
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None
+
+
+BASELINE_REWARD_KEYS = (
+    "lambda_electricity",
+    "lambda_discomfort",
+    "electricity_scale",
+    "discomfort_scale",
+    "band",
+    "lower_exponent",
+    "higher_exponent",
+)
+CARBON_REWARDS = ("carbon", "fair_carbon", "worst_case_fair", "disparity_fair")
+FAIR_REWARDS = ("fair_carbon", "worst_case_fair", "disparity_fair")
+
+
+def default_output_directory(reward: str) -> Path:
+    """Return a per-reward default so experiments do not overwrite each other."""
+    if reward in ("electricity_discomfort", "independent_sac"):
+        return DEFAULT_OUTPUT_DIRECTORY
+    return DEFAULT_OUTPUT_DIRECTORY.parent / f"{reward}_sac"
+
+
+def _normalized_reward_config(reward_kwargs: RewardKwargs | None) -> RewardKwargs:
+    """Copy a reward config and keep the ``band``/``comfort_band`` aliases equal."""
+    config: RewardKwargs = dict(reward_kwargs or {})  # type: ignore[assignment]
+    band = config.get("comfort_band", config.get("band", DEFAULT_COMFORT_BAND))
+    if float(config.get("band", band)) != float(band):
+        raise ValueError(
+            f"band={config['band']!r} conflicts with comfort_band={band!r}."
+        )
+    config["band"] = band
+    config["comfort_band"] = band
+    return config
 
 
 def _set_random_seeds(seed: int) -> None:
@@ -314,12 +350,12 @@ def _reward_kwargs(
     comfort_band: float = DEFAULT_COMFORT_BAND,
     lower_exponent: float = DEFAULT_LOWER_EXPONENT,
     higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
-    carbon_weight: float = 1.0,
-    comfort_weight: float = 0.25,
-    fairness_weight: float = 0.25,
+    carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+    comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+    fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
 ) -> RewardKwargs:
     return {
         "lambda_electricity": lambda_electricity,
@@ -346,13 +382,6 @@ def make_sac_env(
     random_seed: int,
     reward: RewardChoice = "electricity_discomfort",
     reward_kwargs: RewardKwargs | None = None,
-    carbon_weight: float = 1.0,
-    comfort_weight: float = 0.25,
-    fairness_weight: float = 0.25,
-    worst_case_weight: float | None = None,
-    disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
-    comfort_band: float = DEFAULT_COMFORT_BAND,
     include_lstm_warmup: bool = False,
     simulate_power_outage: bool | None = None,
     observe_simulated_temperature: bool = False,
@@ -360,17 +389,7 @@ def make_sac_env(
     """Create a decentralized CityLearn env for one dataset split."""
     split = get_split(split) if isinstance(split, str) else split
     schema = Path(schema).resolve()
-    merged_reward_kwargs: RewardKwargs = dict(reward_kwargs or {})  # type: ignore[assignment]
-
-    # Set defaults from explicit arguments if not already present in reward_kwargs
-    merged_reward_kwargs.setdefault("carbon_weight", carbon_weight)
-    merged_reward_kwargs.setdefault("comfort_weight", comfort_weight)
-    merged_reward_kwargs.setdefault("fairness_weight", fairness_weight)
-    merged_reward_kwargs.setdefault("worst_case_weight", worst_case_weight)
-    merged_reward_kwargs.setdefault("disparity_weight", disparity_weight)
-    merged_reward_kwargs.setdefault("fairness_mode", fairness_mode)
-    merged_reward_kwargs.setdefault("comfort_band", comfort_band)
-    merged_reward_kwargs.setdefault("band", comfort_band)
+    reward_config = _normalized_reward_config(reward_kwargs)
 
     if include_lstm_warmup and split.start_time_step > 0:
         start = warmup_start_time_step(split, LSTM_LOOKBACK)
@@ -399,42 +418,15 @@ def make_sac_env(
     if reward in ("electricity_discomfort", "independent_sac"):
         env.reward_function = ElectricityDiscomfortSACReward(
             env.get_metadata(),
-            **merged_reward_kwargs,
+            **{
+                key: reward_config[key]
+                for key in BASELINE_REWARD_KEYS
+                if key in reward_config
+            },
         )
-    elif reward == "carbon":
-        env.reward_function = CarbonAwareReward(
-            env.get_metadata(), district_shared=False
-        )
-    elif reward in ("fair_carbon", "worst_case_fair", "disparity_fair"):
-        resolved_mode = (
-            "worst_case"
-            if reward == "worst_case_fair"
-            else "disparity"
-            if reward == "disparity_fair"
-            else merged_reward_kwargs.get("fairness_mode", fairness_mode)
-        )
-        env.reward_function = FairCarbonAwareReward(
-            env.get_metadata(),
-            carbon_weight=float(merged_reward_kwargs.get("carbon_weight", 1.0)),
-            comfort_weight=float(merged_reward_kwargs.get("comfort_weight", 0.25)),
-            fairness_weight=float(merged_reward_kwargs.get("fairness_weight", 0.25)),
-            worst_case_weight=(
-                None
-                if merged_reward_kwargs.get("worst_case_weight") is None
-                else float(merged_reward_kwargs["worst_case_weight"])
-            ),
-            disparity_weight=(
-                None
-                if merged_reward_kwargs.get("disparity_weight") is None
-                else float(merged_reward_kwargs["disparity_weight"])
-            ),
-            fairness_mode=resolved_mode,
-            comfort_band=float(
-                merged_reward_kwargs.get(
-                    "comfort_band",
-                    merged_reward_kwargs.get("band", DEFAULT_COMFORT_BAND),
-                )
-            ),
+    elif reward in CARBON_REWARDS:
+        env.reward_function = build_carbon_reward(
+            reward, env.get_metadata(), reward_config
         )
     elif reward != "schema":
         raise ValueError(f"Unsupported reward choice: {reward}")
@@ -810,7 +802,7 @@ def evaluate_independent_sac(
     metadata = dict(checkpoint.get("metadata", {}))
     split = get_split(split) if isinstance(split, str) else split
     random_seed = int(metadata.get("random_seed", 42))
-    reward_config: RewardKwargs = dict(metadata.get("reward_config", {}))  # type: ignore[assignment]
+    reward_config = _normalized_reward_config(metadata.get("reward_config"))
     hyper = dict(metadata.get("hyperparameters", {}))
     options = dict(metadata.get("pipeline_options", {}))
     if observe_simulated_temperature is None:
@@ -1021,21 +1013,36 @@ def evaluate_independent_sac(
     return result
 
 
+#: Reward -> (rule label, validation column) used to rank feasible checkpoints.
+SELECTION_OBJECTIVES: dict[str, tuple[str, str]] = {
+    "carbon": ("carbon", "district_carbon_emissions_kgco2"),
+    "fair_carbon": ("carbon", "district_carbon_emissions_kgco2"),
+    "worst_case_fair": ("worst_building_discomfort", "worst_building_discomfort"),
+    "disparity_fair": ("discomfort_gap", "building_discomfort_gap"),
+}
+DEFAULT_SELECTION_OBJECTIVE = ("electricity", "district_electricity_consumption_kwh")
+
+
 def select_checkpoint(
     validation_history: pd.DataFrame,
     *,
     discomfort_threshold: float = DEFAULT_DISCOMFORT_THRESHOLD,
+    reward: str = "electricity_discomfort",
 ) -> dict[str, Any]:
     """Select a checkpoint from validation history only.
 
     Selection rule
     --------------
     1. Prefer checkpoints with district ``discomfort_proportion`` <= threshold.
-    2. Among feasible checkpoints, choose the lowest district electricity
-       consumption (kWh).
+    2. Among feasible checkpoints, choose the lowest value of the reward's
+       objective: carbon emissions for ``carbon`` and ``fair_carbon``,
+       worst-building discomfort for ``worst_case_fair``, the gap between the
+       most and least comfortable buildings for ``disparity_fair``, and
+       electricity consumption (kWh) otherwise.
     3. If none are feasible, report that fact and fall back to the checkpoint
-       with the lowest discomfort; ties break by lower electricity.
+       with the lowest discomfort; ties break by the same objective.
     """
+    label, metric = SELECTION_OBJECTIVES.get(reward, DEFAULT_SELECTION_OBJECTIVE)
     if validation_history.empty:
         raise ValueError("validation_history is empty")
 
@@ -1044,6 +1051,7 @@ def select_checkpoint(
         "checkpoint_path",
         "district_electricity_consumption_kwh",
         "district_discomfort_proportion",
+        metric,
     }
     missing = required - set(validation_history.columns)
     if missing:
@@ -1056,29 +1064,23 @@ def select_checkpoint(
     feasible = history[history["feasible"]]
     if len(feasible):
         selected = feasible.sort_values(
-            by=[
-                "district_electricity_consumption_kwh",
-                "district_discomfort_proportion",
-                "episode",
-            ],
+            by=[metric, "district_discomfort_proportion", "episode"],
             ascending=[True, True, True],
         ).iloc[0]
-        rule = "comfort_feasible_then_min_electricity"
+        rule = f"comfort_feasible_then_min_{label}"
         fallback = False
     else:
         selected = history.sort_values(
-            by=[
-                "district_discomfort_proportion",
-                "district_electricity_consumption_kwh",
-                "episode",
-            ],
+            by=["district_discomfort_proportion", metric, "episode"],
             ascending=[True, True, True],
         ).iloc[0]
-        rule = "fallback_least_discomfort_then_min_electricity"
+        rule = f"fallback_least_discomfort_then_min_{label}"
         fallback = True
 
     return {
         "selection_rule": rule,
+        "selection_metric": metric,
+        "selection_metric_value": float(selected[metric]),
         "discomfort_threshold": float(discomfort_threshold),
         "no_feasible_checkpoint": bool(fallback),
         "selected_episode": int(selected["episode"]),
@@ -1097,6 +1099,13 @@ def _district_kpi_value(kpis: pd.DataFrame, metric: str) -> float:
     if rows.empty:
         return float("nan")
     return float(rows.iloc[0]["value"])
+
+
+def _building_discomfort(kpis: pd.DataFrame) -> pd.Series:
+    rows = kpis[
+        (kpis["name"] != "District") & (kpis["cost_function"] == "discomfort_proportion")
+    ]
+    return rows["value"].astype(float)
 
 
 def _train_one_episode(agent: CountingSAC, deterministic: bool = False) -> dict[str, Any]:
@@ -1156,7 +1165,7 @@ def _train_one_episode(agent: CountingSAC, deterministic: bool = False) -> dict[
 
 def train_independent_sac(
     schema: str | Path = DEFAULT_SCHEMA,
-    output_directory: str | Path = DEFAULT_OUTPUT_DIRECTORY,
+    output_directory: str | Path | None = None,
     episodes: int = DEFAULT_TRAINING_EPISODES,
     random_seed: int = 42,
     reward: RewardChoice = "electricity_discomfort",
@@ -1179,12 +1188,12 @@ def train_independent_sac(
     comfort_band: float = DEFAULT_COMFORT_BAND,
     lower_exponent: float = DEFAULT_LOWER_EXPONENT,
     higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
-    carbon_weight: float = 1.0,
-    comfort_weight: float = 0.25,
-    fairness_weight: float = 0.25,
+    carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+    comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+    fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
     validation_every: int = DEFAULT_VALIDATION_EVERY,
     discomfort_threshold: float = DEFAULT_DISCOMFORT_THRESHOLD,
     include_lstm_warmup: bool = True,
@@ -1214,7 +1223,9 @@ def train_independent_sac(
             print(message, flush=True)
 
     schema = Path(schema).resolve()
-    output_directory = Path(output_directory).resolve()
+    output_directory = Path(
+        output_directory or default_output_directory(reward)
+    ).resolve()
     seed_directory = output_directory / f"seed_{random_seed}"
     checkpoint_directory = seed_directory / "checkpoints"
     if save_results:
@@ -1235,6 +1246,8 @@ def train_independent_sac(
         disparity_weight=disparity_weight,
         fairness_mode=fairness_mode,
     )
+    if reward in FAIR_REWARDS:
+        reward_config["fairness_mode"] = resolve_fairness_mode(reward, fairness_mode)
 
     _log(
         f"[SAC] seed={random_seed} | train episodes={episodes} | "
@@ -1374,6 +1387,7 @@ def train_independent_sac(
             )
             if rng_state is not None:
                 _restore_rng_state(rng_state)
+            building_discomfort = _building_discomfort(validation["kpis"])
             val_row = {
                 "episode": episode,
                 "checkpoint_path": str(checkpoint_path),
@@ -1395,6 +1409,10 @@ def train_independent_sac(
                 "district_ramping_kwh": _district_kpi_value(
                     validation["kpis"], "ramping_kwh"
                 ),
+                "worst_building_discomfort": float(building_discomfort.max()),
+                "building_discomfort_gap": float(
+                    building_discomfort.max() - building_discomfort.min()
+                ),
             }
             validation_rows.append(val_row)
             _log(
@@ -1414,6 +1432,7 @@ def train_independent_sac(
     selection = select_checkpoint(
         validation_history,
         discomfort_threshold=discomfort_threshold,
+        reward=reward,
     )
     _log(
         f"[SAC] model selection | episode={selection['selected_episode']} | "
@@ -1549,7 +1568,7 @@ def aggregate_seed_results(
 
 def run_independent_sac(
     schema: str | Path = DEFAULT_SCHEMA,
-    output_directory: str | Path = DEFAULT_OUTPUT_DIRECTORY,
+    output_directory: str | Path | None = None,
     episodes: int = DEFAULT_TRAINING_EPISODES,
     random_seed: int = 42,
     reward: RewardChoice = "electricity_discomfort",
@@ -1567,12 +1586,12 @@ def run_independent_sac(
     end_exploration_time_step: int | None = None,
     simulation_end_time_step: int | None = None,
     save_results: bool = True,
-    carbon_weight: float = 1.0,
-    comfort_weight: float = 0.25,
-    fairness_weight: float = 0.25,
+    carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+    comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+    fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
     comfort_band: float = DEFAULT_COMFORT_BAND,
     **kwargs: Any,
 ) -> dict[str, Any]:
@@ -1672,7 +1691,7 @@ def run_independent_sac(
 def _run_smoke_training(
     *,
     schema: str | Path,
-    output_directory: str | Path,
+    output_directory: str | Path | None,
     episodes: int,
     random_seed: int,
     reward: RewardChoice,
@@ -1697,12 +1716,12 @@ def _run_smoke_training(
     comfort_band: float = DEFAULT_COMFORT_BAND,
     lower_exponent: float = DEFAULT_LOWER_EXPONENT,
     higher_exponent: float = DEFAULT_HIGHER_EXPONENT,
-    carbon_weight: float = 1.0,
-    comfort_weight: float = 0.25,
-    fairness_weight: float = 0.25,
+    carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+    comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+    fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
     worst_case_weight: float | None = None,
     disparity_weight: float | None = None,
-    fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
+    fairness_mode: Literal["combined", "worst_case", "disparity"] | None = None,
     include_lstm_warmup: bool = True,
     observe_simulated_temperature: bool = False,
     use_training_encoders: bool = False,
@@ -1716,7 +1735,9 @@ def _run_smoke_training(
     only recorded.
     """
     schema = Path(schema).resolve()
-    output_directory = Path(output_directory).resolve()
+    output_directory = Path(
+        output_directory or default_output_directory(reward)
+    ).resolve()
     seed_directory = output_directory / f"seed_{random_seed}" / "smoke"
     seed_directory.mkdir(parents=True, exist_ok=True)
 
@@ -1735,6 +1756,8 @@ def _run_smoke_training(
         disparity_weight=disparity_weight,
         fairness_mode=fairness_mode,
     )
+    if reward in FAIR_REWARDS:
+        reward_config["fairness_mode"] = resolve_fairness_mode(reward, fairness_mode)
     _set_random_seeds(random_seed)
     env = make_sac_env(
         schema,
@@ -1865,7 +1888,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     parser.add_argument(
-        "--output-directory", type=Path, default=DEFAULT_OUTPUT_DIRECTORY
+        "--output-directory",
+        type=Path,
+        default=None,
+        help="Defaults to a separate directory for each reward.",
     )
     parser.add_argument("--episodes", type=int, default=DEFAULT_TRAINING_EPISODES)
     parser.add_argument("--seed", type=int, default=42)
@@ -1892,37 +1918,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fairness-mode",
         choices=("combined", "worst_case", "disparity"),
-        default="combined",
-        help="Fairness formulation for fair_carbon reward.",
+        default=None,
+        help=(
+            "Fairness formulation for fair_carbon (default: combined). "
+            "worst_case_fair and disparity_fair fix their own mode and reject "
+            "a different one."
+        ),
     )
     parser.add_argument(
         "--worst-case-weight",
         type=float,
         default=None,
-        help="Explicit weight on worst-building discomfort (overrides fairness-mode).",
+        help=(
+            "Rescales the worst-building term. Only valid if the mode keeps it "
+            "on (combined, worst_case)."
+        ),
     )
     parser.add_argument(
         "--disparity-weight",
         type=float,
         default=None,
-        help="Explicit weight on building discomfort disparity (overrides fairness-mode).",
+        help=(
+            "Rescales the disparity term. Only valid if the mode keeps it on "
+            "(combined, disparity)."
+        ),
     )
     parser.add_argument(
         "--carbon-weight",
         type=float,
-        default=1.0,
+        default=DEFAULT_CARBON_WEIGHT,
         help="Weight on operational carbon emissions.",
     )
     parser.add_argument(
         "--comfort-weight",
         type=float,
-        default=0.25,
+        default=DEFAULT_COMFORT_WEIGHT,
         help="Weight on local thermal discomfort.",
     )
     parser.add_argument(
         "--fairness-weight",
         type=float,
-        default=0.25,
+        default=DEFAULT_FAIRNESS_WEIGHT,
         help="Base weight for active fairness terms in fair_carbon reward.",
     )
     parser.add_argument(
@@ -1991,6 +2027,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    args.output_directory = args.output_directory or default_output_directory(args.reward)
     seeds = tuple(args.seeds) if args.seeds is not None else (args.seed,)
 
     results = []

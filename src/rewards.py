@@ -17,6 +17,26 @@ FAIRNESS_MODE_MULTIPLIERS: dict[str, tuple[float, float]] = {
     "disparity": (0.0, 1.0),
 }
 
+DEFAULT_CARBON_WEIGHT = 1.0
+DEFAULT_COMFORT_WEIGHT = 0.25
+DEFAULT_FAIRNESS_WEIGHT = 0.25
+
+#: Reward names that fix the fairness mode, and the mode each one fixes.
+FORCED_FAIRNESS_MODE: dict[str, str] = {
+    "worst_case_fair": "worst_case",
+    "disparity_fair": "disparity",
+}
+
+#: Config keys that ``build_carbon_reward`` forwards to ``FairCarbonAwareReward``.
+FAIR_REWARD_KEYS = (
+    "carbon_weight",
+    "comfort_weight",
+    "fairness_weight",
+    "worst_case_weight",
+    "disparity_weight",
+    "comfort_band",
+)
+
 
 class CarbonAwareReward(RewardFunction):
     r"""Penalize operational carbon emissions from grid imports.
@@ -25,7 +45,7 @@ class CarbonAwareReward(RewardFunction):
 
     .. math::
 
-        r_{i,t} = -c_t \max(E_{i,t}, 0)
+        r_{i,t} = -w_c c_t \max(E_{i,t}, 0)
 
     where ``c`` is grid carbon intensity and ``E`` is net electricity
     consumption. Grid export receives neither a penalty nor a credit, matching
@@ -40,22 +60,29 @@ class CarbonAwareReward(RewardFunction):
         same negative district-emissions reward. The default ``False`` keeps
         one local emissions reward per building, preserving the reward layout
         used by the independent SAC baseline.
+    carbon_weight:
+        Weight on operational emissions (:math:`w_c`).
     """
 
     def __init__(
         self,
         env_metadata: Mapping[str, Any],
         district_shared: bool = False,
+        carbon_weight: float = DEFAULT_CARBON_WEIGHT,
     ) -> None:
         super().__init__(env_metadata)
         self.district_shared = bool(district_shared)
+        self.carbon_weight = float(carbon_weight)
+        if self.carbon_weight < 0.0:
+            raise ValueError("carbon_weight must be non-negative")
 
     def get_required_observation_names(self) -> Iterable[str]:
         return ("net_electricity_consumption", "carbon_intensity")
 
     def calculate(self, observations: list[Mapping[str, float]]) -> list[float]:
         emissions = [
-            max(float(o["net_electricity_consumption"]), 0.0)
+            self.carbon_weight
+            * max(float(o["net_electricity_consumption"]), 0.0)
             * max(float(o["carbon_intensity"]), 0.0)
             for o in observations
         ]
@@ -120,9 +147,9 @@ class FairCarbonAwareReward(RewardFunction):
     def __init__(
         self,
         env_metadata: Mapping[str, Any],
-        carbon_weight: float = 1.0,
-        comfort_weight: float = 0.25,
-        fairness_weight: float = 0.25,
+        carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+        comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+        fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
         comfort_band: float = 1.0,
         worst_case_weight: float | None = None,
         disparity_weight: float | None = None,
@@ -276,9 +303,9 @@ class WorstCaseFairReward(FairCarbonAwareReward):
     def __init__(
         self,
         env_metadata: Mapping[str, Any],
-        carbon_weight: float = 1.0,
-        comfort_weight: float = 0.25,
-        fairness_weight: float = 0.25,
+        carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+        comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+        fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
         comfort_band: float = 1.0,
         **kwargs: Any,
     ) -> None:
@@ -307,9 +334,9 @@ class DisparityAwareReward(FairCarbonAwareReward):
     def __init__(
         self,
         env_metadata: Mapping[str, Any],
-        carbon_weight: float = 1.0,
-        comfort_weight: float = 0.25,
-        fairness_weight: float = 0.25,
+        carbon_weight: float = DEFAULT_CARBON_WEIGHT,
+        comfort_weight: float = DEFAULT_COMFORT_WEIGHT,
+        fairness_weight: float = DEFAULT_FAIRNESS_WEIGHT,
         comfort_band: float = 1.0,
         **kwargs: Any,
     ) -> None:
@@ -322,3 +349,41 @@ class DisparityAwareReward(FairCarbonAwareReward):
             fairness_mode="disparity",
             **kwargs,
         )
+
+
+def resolve_fairness_mode(reward: str, fairness_mode: str | None = None) -> str:
+    """Return the fairness mode a reward name actually trains with.
+
+    ``worst_case_fair`` and ``disparity_fair`` fix their own mode, so asking for
+    a different one is an error rather than something to ignore.
+    """
+    forced = FORCED_FAIRNESS_MODE.get(reward)
+    if forced is not None and fairness_mode not in (None, forced):
+        raise ValueError(
+            f"reward={reward!r} always uses fairness_mode={forced!r}, "
+            f"but fairness_mode={fairness_mode!r} was given."
+        )
+    return forced or fairness_mode or DEFAULT_FAIRNESS_MODE
+
+
+def build_carbon_reward(
+    reward: str,
+    env_metadata: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> RewardFunction:
+    """Build a carbon or fairness reward from its name and config.
+
+    Shared by the SAC and MARLISA runners so a reward name means the same thing
+    for both algorithms.
+    """
+    if reward == "carbon":
+        return CarbonAwareReward(
+            env_metadata,
+            district_shared=False,
+            carbon_weight=config.get("carbon_weight", DEFAULT_CARBON_WEIGHT),
+        )
+    return FairCarbonAwareReward(
+        env_metadata,
+        fairness_mode=resolve_fairness_mode(reward, config.get("fairness_mode")),
+        **{key: config[key] for key in FAIR_REWARD_KEYS if key in config},
+    )
