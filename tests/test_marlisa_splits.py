@@ -146,3 +146,20 @@ def test_reward_metadata_records_the_objective_that_ran(tmp_path: Path) -> None:
     assert weights["disparity"] == pytest.approx(0.25)
     assert "disparity_loss" in result["metadata"]["reward_formula"]
     assert "worst_loss" not in result["metadata"]["reward_formula"]
+
+
+def test_make_marlisa_env_passes_carbon_weight():
+    env = make_marlisa_env(SCHEMA, TRAIN_SPLIT, reward="carbon", carbon_weight=2.0)
+    assert env.reward_function.carbon_weight == pytest.approx(2.0)
+
+
+def test_make_marlisa_env_alias_uses_its_own_mode_by_default():
+    env = make_marlisa_env(SCHEMA, TRAIN_SPLIT, reward="worst_case_fair")
+    assert env.reward_function.fairness_mode == "worst_case"
+
+
+def test_make_marlisa_env_alias_rejects_a_different_mode():
+    with pytest.raises(ValueError, match="always uses"):
+        make_marlisa_env(
+            SCHEMA, TRAIN_SPLIT, reward="worst_case_fair", fairness_mode="disparity"
+        )
