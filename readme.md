@@ -73,7 +73,7 @@ pip install -r requirements.txt
 
 ```shell
 pip install -r requirements-lock.txt          # or: uv pip install -r requirements-lock.txt
-python -m pytest tests/test_rewards.py tests/test_sac_reward.py tests/test_sac_splits.py   # fast checks, about 10 s
+python -m pytest tests/test_rewards.py tests/test_sac_reward.py tests/test_sac_splits.py   # fast checks, about 20 s
 # or run the full test suite (including pipeline fixes and smoke tests):
 python -m pytest
 ```
@@ -146,11 +146,29 @@ python src/run_independent_sac.py --episodes 3
 
 # With pipeline fixes (simulated temperature, training encoders, no outages):
 python src/run_independent_sac.py --episodes 3 --pipeline-fixes
+
+# With a carbon-aware or fairness-aware reward:
+python src/run_independent_sac.py --episodes 3 --reward worst_case_fair --pipeline-fixes
 ```
 
-The default workflow uses one SAC policy per building and `ElectricityDiscomfortSACReward` (or CityLearn's `IndependentSACReward` via `--reward independent_sac`). Training runs on the June 1–20 split (`TRAIN_SPLIT`), validation on June 21–25 (`VALIDATION_SPLIT`) selects the best checkpoint, and deterministic testing evaluates on the held-out June 26–30 split (`TEST_SPLIT`). Three episodes are useful for checking the pipeline but are not enough for a final research result. Increase the episode count and repeat the experiment across fixed random seeds for reported comparisons.
+The default workflow uses one SAC policy per building and `ElectricityDiscomfortSACReward`; `--reward independent_sac` selects the same reward. Training runs on the June 1–20 split (`TRAIN_SPLIT`), validation on June 21–25 (`VALIDATION_SPLIT`) selects the best checkpoint, and deterministic testing evaluates on the held-out June 26–30 split (`TEST_SPLIT`). Three episodes are useful for checking the pipeline but are not enough for a final research result. Increase the episode count and repeat the experiment across fixed random seeds for reported comparisons.
 
-Results are saved under `outputs/independent_sac/`, including validation and held-out test observations, episode rewards, final actions and rewards, KPI tables, metadata, and PyTorch checkpoints.
+`--reward` sets what the agents train on, how validation ranks checkpoints, and where results go by default:
+
+| `--reward` | Training objective | Checkpoints ranked by | Default output directory |
+| --- | --- | --- | --- |
+| `electricity_discomfort` (default), `independent_sac` | Electricity imports and thermal discomfort | Electricity consumption | `outputs/independent_sac/` |
+| `carbon` | Carbon emissions | Carbon emissions | `outputs/carbon_sac/` |
+| `fair_carbon` | Carbon, discomfort, and the fairness terms set by `--fairness-mode` (default `combined`) | Carbon emissions | `outputs/fair_carbon_sac/` |
+| `worst_case_fair` | Carbon, discomfort, and worst-building discomfort | Worst-building discomfort | `outputs/worst_case_fair_sac/` |
+| `disparity_fair` | Carbon, discomfort, and the discomfort gap between buildings | Discomfort gap between buildings | `outputs/disparity_fair_sac/` |
+| `schema` | The reward defined in the schema | Electricity consumption | `outputs/schema_sac/` |
+
+Validation first keeps checkpoints at or below `--discomfort-threshold`, then picks the lowest value of the ranking metric. If none qualify, it picks the lowest discomfort and uses the ranking metric to break ties.
+
+The default reward's weights are `--lambda-electricity` and `--lambda-discomfort`. `--carbon-weight` applies to the carbon and fairness rewards, while `--comfort-weight` and `--fairness-weight` apply to the fairness rewards only. `--worst-case-weight` and `--disparity-weight` rescale a fairness term and raise an error if the fairness mode turns that term off. `worst_case_fair` and `disparity_fair` fix their own fairness mode and reject a different `--fairness-mode`.
+
+Each run saves validation and held-out test observations, episode rewards, final actions and rewards, KPI tables, metadata, and PyTorch checkpoints. Runs with the same reward and seed share a directory, so give each run in a weight sweep its own `--output-directory`.
 
 ## MARLISA
 
