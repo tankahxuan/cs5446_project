@@ -1,0 +1,80 @@
+{
+  "controller": "citylearn.agents.sac.SAC",
+  "citylearn_version": "3.0.2",
+  "torch_version": "2.14.1+cpu",
+  "schema": "D:\\NUS\\CS5446 Reinforcement Learning\\cs5446_project\\notebooks\\data\\schema.json",
+  "random_seed": 42,
+  "reward_choice": "electricity_discomfort",
+  "reward_config": {
+    "lambda_electricity": 1.0,
+    "lambda_discomfort": 1.0,
+    "electricity_scale": 10.0,
+    "discomfort_scale": 4.0,
+    "band": 1.0,
+    "lower_exponent": 2.0,
+    "higher_exponent": 3.0
+  },
+  "hyperparameters": {
+    "hidden_dimension": [
+      256,
+      256
+    ],
+    "discount": 0.99,
+    "tau": 0.005,
+    "alpha": 0.2,
+    "learning_rate": 0.0003,
+    "batch_size": 256,
+    "replay_buffer_capacity": 100000,
+    "action_scaling_coefficient": 0.5,
+    "reward_scaling": 5.0,
+    "update_per_time_step": 1,
+    "standardize_start_time_step": 479,
+    "end_exploration_time_step": 478
+  },
+  "dataset_splits": {
+    "train": {
+      "name": "train",
+      "start_time_step": 0,
+      "end_time_step": 479,
+      "start_date": "June 1",
+      "end_date": "June 20",
+      "n_time_steps": 480,
+      "n_transitions": 479
+    },
+    "validation": {
+      "name": "validation",
+      "start_time_step": 480,
+      "end_time_step": 599,
+      "start_date": "June 21",
+      "end_date": "June 25",
+      "n_time_steps": 120,
+      "n_transitions": 119
+    },
+    "test": {
+      "name": "test",
+      "start_time_step": 600,
+      "end_time_step": 719,
+      "start_date": "June 26",
+      "end_date": "June 30",
+      "n_time_steps": 120,
+      "n_transitions": 119
+    }
+  },
+  "training_episodes": 50,
+  "validation_every": 5,
+  "model_selection": {
+    "selection_rule": "comfort_feasible_then_min_electricity",
+    "discomfort_threshold": 0.2,
+    "no_feasible_checkpoint": false,
+    "selected_episode": 25,
+    "selected_checkpoint_path": "D:\\NUS\\CS5446 Reinforcement Learning\\cs5446_project\\outputs\\independent_sac\\seed_42\\checkpoints\\episode_025.pt",
+    "district_electricity_consumption_kwh": 391.615649048239,
+    "district_discomfort_proportion": 0.18977591036414565
+  },
+  "environment_steps": 23950,
+  "gradient_updates": 70416,
+  "lstm_lookback": 12,
+  "include_lstm_warmup": true,
+  "evaluation_note": "Validation and test metrics are held-out. Training-period rewards are learning curves only and must not be reported as held-out KPIs.",
+  "dataset_note": "The local dataset covers June only and does not support cross-season generalization claims."
+}

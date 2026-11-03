@@ -94,11 +94,14 @@ def test_marlisa_smoke_train_and_test(tmp_path: Path) -> None:
         run_test=False,
         save_results=True,
     )
+    seed_dir = tmp_path / "marlisa_smoke" / "seed_42"
     assert result["metadata"]["split"] == "train"
     assert result["metadata"]["reward_choice"] == "fair_carbon"
     assert result["metadata"]["reward_weights"]["fairness_mode"] == "worst_case"
-    assert (tmp_path / "marlisa_smoke" / "train_kpis.csv").is_file()
-    assert (tmp_path / "marlisa_smoke" / "checkpoint.pt").is_file()
+    assert result["output_directory"] == seed_dir
+    assert (seed_dir / "train_kpis.csv").is_file()
+    assert (seed_dir / "checkpoint.pt").is_file()
+    assert (seed_dir / "selected_checkpoint.pt").is_file()
 
 
 def test_evaluation_env_warms_up_but_scores_only_the_split() -> None:
@@ -137,15 +140,24 @@ def test_reward_metadata_records_the_objective_that_ran(tmp_path: Path) -> None:
         run_test=False,
         save_results=True,
     )
+    seed_dir = tmp_path / "disparity" / "seed_42"
     weights = json.loads(
-        (tmp_path / "disparity" / "metadata.json").read_text(encoding="utf-8")
+        (seed_dir / "metadata.json").read_text(encoding="utf-8")
     )["reward_weights"]
 
+    assert result["output_directory"] == seed_dir
     assert weights["fairness_mode"] == "disparity"
     assert weights["worst_case"] == pytest.approx(0.0)
     assert weights["disparity"] == pytest.approx(0.25)
     assert "disparity_loss" in result["metadata"]["reward_formula"]
     assert "worst_loss" not in result["metadata"]["reward_formula"]
+
+
+def test_make_marlisa_env_default_reward_is_electricity_discomfort() -> None:
+    from src.sac_reward import ElectricityDiscomfortSACReward
+
+    env = make_marlisa_env(schema=SCHEMA, split=TRAIN_SPLIT)
+    assert isinstance(env.reward_function, ElectricityDiscomfortSACReward)
 
 
 def test_make_marlisa_env_passes_carbon_weight():

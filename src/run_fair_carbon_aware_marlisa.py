@@ -7,9 +7,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 try:
-    from src.run_marlisa import DEFAULT_SCHEMA, run_marlisa
+    from src.run_marlisa import (
+        DEFAULT_SCHEMA,
+        DEFAULT_TRAINING_EPISODES,
+        run_marlisa,
+    )
 except ModuleNotFoundError:
-    from run_marlisa import DEFAULT_SCHEMA, run_marlisa
+    from run_marlisa import (
+        DEFAULT_SCHEMA,
+        DEFAULT_TRAINING_EPISODES,
+        run_marlisa,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +36,8 @@ def run_fair_carbon_aware_marlisa(
     disparity_weight: float | None = None,
     fairness_mode: Literal["combined", "worst_case", "disparity"] = "combined",
     comfort_band: float = 1.0,
-    split: str = "all",
+    split: str = "train",
+    run_validation: bool | None = None,
     run_test: bool | None = None,
     pipeline_fixes: bool = False,
     observe_simulated_temperature: bool = False,
@@ -36,7 +45,10 @@ def run_fair_carbon_aware_marlisa(
     use_training_encoders: bool = False,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Train MARLISA with the project's fair carbon-aware reward."""
+    """Train MARLISA with the project's fair carbon-aware reward.
+
+    Defaults match the shared held-out protocol (train/val/test).
+    """
     if "reward" in kwargs:
         raise ValueError(
             "This runner fixes reward='fair_carbon'; remove reward from kwargs"
@@ -54,6 +66,7 @@ def run_fair_carbon_aware_marlisa(
         fairness_mode=fairness_mode,
         comfort_band=comfort_band,
         split=split,
+        run_validation=run_validation,
         run_test=run_test,
         pipeline_fixes=pipeline_fixes,
         observe_simulated_temperature=observe_simulated_temperature,
@@ -71,15 +84,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-directory", type=Path, default=DEFAULT_OUTPUT_DIRECTORY
     )
-    parser.add_argument("--episodes", type=int, default=3)
+    parser.add_argument(
+        "--episodes", type=int, default=DEFAULT_TRAINING_EPISODES
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--updates-per-step", type=int, default=1)
     parser.add_argument(
         "--split",
         choices=("all", "train", "test", "validation"),
-        default="all",
-        help="Dataset split to train on (default 'all').",
+        default="train",
+        help="Dataset split to train on (default 'train' held-out protocol).",
+    )
+    parser.add_argument(
+        "--no-validation",
+        action="store_true",
+        help="Skip validation-split evaluation when training on the train split.",
     )
     parser.add_argument(
         "--no-test",
@@ -147,7 +167,8 @@ def main() -> None:
         batch_size=args.batch_size,
         update_per_time_step=args.updates_per_step,
         split=args.split,
-        run_test=not args.no_test if args.no_test else None,
+        run_validation=False if args.no_validation else None,
+        run_test=False if args.no_test else None,
         fairness_mode=args.fairness_mode,
         worst_case_weight=args.worst_case_weight,
         disparity_weight=args.disparity_weight,
@@ -163,6 +184,9 @@ def main() -> None:
     )
     print("\nFair carbon-aware MARLISA evaluation (lower is better):")
     print(result["kpi_table"].round(3).to_string())
+    if result.get("validation_result") is not None:
+        print("\nValidation KPIs:")
+        print(result["validation_result"]["kpi_table"].round(3).to_string())
     if result.get("test_result") is not None:
         print("\nHeld-out test KPIs:")
         print(result["test_result"]["kpi_table"].round(3).to_string())

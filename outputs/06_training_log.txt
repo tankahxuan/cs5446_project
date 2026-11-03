@@ -1,0 +1,36 @@
+Project: D:\NUS\CS5446 Reinforcement Learning\cs5446_project
+Episodes=50 seed=42 skip=['independent_sac']
+Schema: D:\NUS\CS5446 Reinforcement Learning\cs5446_project\notebooks\data\schema.json
+
+========================================================================
+Running RBC
+========================================================================
+Completed rbc in 0.0 minutes -> D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\rbc\seed_42
+
+========================================================================
+Skipping Independent SAC (reuse existing outputs)
+========================================================================
+
+========================================================================
+Running MARLISA
+========================================================================
+Completed marlisa in 29.4 minutes -> D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\marlisa\seed_42
+
+========================================================================
+Running Carbon-aware MARLISA
+========================================================================
+Completed carbon_aware_marlisa in 31.0 minutes -> D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\carbon_aware_marlisa\seed_42
+
+========================================================================
+Running Fair carbon-aware MARLISA
+========================================================================
+Completed fair_carbon_aware_marlisa in 29.8 minutes -> D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\fair_carbon_aware_marlisa\seed_42
+
+Selected controllers finished in 90.3 minutes.
+Timing table: D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\06_experiment_run_log.csv
+                    model  episodes  seed   minutes                                                                              output_directory    status
+                      rbc         1    42  0.038161                       D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\rbc\seed_42 completed
+          independent_sac        50    42  0.000000           D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\independent_sac\seed_42   skipped
+                  marlisa        50    42 29.375672                   D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\marlisa\seed_42 completed
+     carbon_aware_marlisa        50    42 30.998797      D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\carbon_aware_marlisa\seed_42 completed
+fair_carbon_aware_marlisa        50    42 29.833456 D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\fair_carbon_aware_marlisa\seed_42 completed

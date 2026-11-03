@@ -1,0 +1,6 @@
+model,episodes,seed,minutes,output_directory,status
+rbc,1,42,0.03816124333333353,D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\rbc\seed_42,completed
+independent_sac,50,42,0.0,D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\independent_sac\seed_42,skipped
+marlisa,50,42,29.375671888333333,D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\marlisa\seed_42,completed
+carbon_aware_marlisa,50,42,30.99879694166667,D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\carbon_aware_marlisa\seed_42,completed
+fair_carbon_aware_marlisa,50,42,29.83345633166667,D:\NUS\CS5446 Reinforcement Learning\cs5446_project\outputs\fair_carbon_aware_marlisa\seed_42,completed

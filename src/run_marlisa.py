@@ -1,16 +1,19 @@
 """Train and evaluate CityLearn's MARLISA controller.
 
-The experiment follows the same schema, seed, SAC hyperparameters, training
-phases, deterministic evaluation, and output layout as the independent SAC
-baseline. Standard MARLISA uses CityLearn's district-coupled ``MARL`` reward
-and additionally learns building demand estimators and shares coordination
-variables between building policies.
+Defaults follow the shared research protocol used by Independent SAC:
+train on June 1–20 (0–479), report validation on June 21–25, and evaluate the
+final deterministic policy on held-out June 26–30. Standard MARLISA uses the
+electricity+discomfort reward (no carbon/fairness). Coordination still comes
+from MARLISA's demand estimators and information sharing.
+
+Set ``split='all'`` to recover the older full-month development workflow.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Literal
 
@@ -54,6 +57,10 @@ try:
         _training_reward_records,
         compute_split_kpis,
     )
+    from src.sac_reward import (
+        DEFAULT_COMFORT_BAND as SAC_DEFAULT_COMFORT_BAND,
+        ElectricityDiscomfortSACReward,
+    )
 except ModuleNotFoundError:
     # Support direct execution: python src/run_marlisa.py
     from dataset_splits import (
@@ -88,12 +95,21 @@ except ModuleNotFoundError:
         _training_reward_records,
         compute_split_kpis,
     )
+    from sac_reward import (
+        DEFAULT_COMFORT_BAND as SAC_DEFAULT_COMFORT_BAND,
+        ElectricityDiscomfortSACReward,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCHEMA = PROJECT_ROOT / "notebooks" / "data" / "schema.json"
 DEFAULT_OUTPUT_DIRECTORY = PROJECT_ROOT / "outputs" / "marlisa"
+# Match Independent SAC held-out training budgets / exploration schedule.
+DEFAULT_TRAINING_EPISODES = 50
+DEFAULT_END_EXPLORATION_TIME_STEP = 478
+DEFAULT_STANDARDIZE_START_TIME_STEP = 479
 RewardChoice = Literal[
+    "electricity_discomfort",
     "independent_sac",
     "carbon",
     "fair_carbon",
@@ -334,34 +350,47 @@ def _fairness_summary(kpis: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _resolve_kpi_csv(method_directory: Path, seed: int = 42) -> Path | None:
+    """Prefer held-out ``seed_*/test_kpis.csv``, then legacy flat ``kpis.csv``."""
+    candidates = (
+        method_directory / f"seed_{seed}" / "test_kpis.csv",
+        method_directory / "test_kpis.csv",
+        method_directory / f"seed_{seed}" / "kpis.csv",
+        method_directory / "kpis.csv",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
 def _comparison_table(
     current_kpis: pd.DataFrame,
     current_label: str,
+    *,
+    seed: int = 42,
 ) -> pd.DataFrame:
     """Combine available district KPI results using a shared table format."""
-    controller_paths = {
-        "BasicRBC": PROJECT_ROOT / "outputs" / "rbc" / "kpis.csv",
-        "Independent SAC": (
-            PROJECT_ROOT / "outputs" / "independent_sac" / "kpis.csv"
-        ),
-        "MARLISA": PROJECT_ROOT / "outputs" / "marlisa" / "kpis.csv",
-        "Carbon-aware MARLISA": (
-            PROJECT_ROOT / "outputs" / "carbon_aware_marlisa" / "kpis.csv"
-        ),
+    controller_dirs = {
+        "BasicRBC": PROJECT_ROOT / "outputs" / "rbc",
+        "Independent SAC": PROJECT_ROOT / "outputs" / "independent_sac",
+        "MARLISA": PROJECT_ROOT / "outputs" / "marlisa",
+        "Carbon-aware MARLISA": PROJECT_ROOT / "outputs" / "carbon_aware_marlisa",
         "Fair carbon-aware MARLISA": (
-            PROJECT_ROOT / "outputs" / "fair_carbon_aware_marlisa" / "kpis.csv"
+            PROJECT_ROOT / "outputs" / "fair_carbon_aware_marlisa"
         ),
         "Worst-case fair MARLISA": (
-            PROJECT_ROOT / "outputs" / "worst_case_fair_marlisa" / "kpis.csv"
+            PROJECT_ROOT / "outputs" / "worst_case_fair_marlisa"
         ),
         "Disparity-aware MARLISA": (
-            PROJECT_ROOT / "outputs" / "disparity_aware_marlisa" / "kpis.csv"
+            PROJECT_ROOT / "outputs" / "disparity_aware_marlisa"
         ),
     }
     series: dict[str, pd.Series] = {}
 
-    for controller, path in controller_paths.items():
-        if path.is_file():
+    for controller, directory in controller_dirs.items():
+        path = _resolve_kpi_csv(directory, seed=seed)
+        if path is not None:
             table = pd.read_csv(path)
             series[controller] = (
                 table.loc[table["level"] == "district"]
@@ -380,7 +409,7 @@ def make_marlisa_env(
     split: TimeSplit | str | None = None,
     *,
     random_seed: int = 42,
-    reward: RewardChoice = "marl",
+    reward: RewardChoice = "electricity_discomfort",
     carbon_weight: float = 1.0,
     comfort_weight: float = 0.25,
     fairness_weight: float = 0.25,
@@ -441,7 +470,13 @@ def make_marlisa_env(
 
     env = ObservationHistoryCityLearnEnv(**env_kwargs)
 
-    if reward == "independent_sac":
+    if reward in ("electricity_discomfort",):
+        env.reward_function = ElectricityDiscomfortSACReward(
+            env.get_metadata(),
+            band=comfort_band if comfort_band is not None else SAC_DEFAULT_COMFORT_BAND,
+        )
+    elif reward == "independent_sac":
+        # CityLearn's electricity-only IndependentSACReward (legacy option).
         env.reward_function = IndependentSACReward(env.get_metadata())
     elif reward in ("carbon", "fair_carbon", "worst_case_fair", "disparity_fair"):
         env.reward_function = build_carbon_reward(
@@ -482,7 +517,7 @@ def evaluate_marlisa(
     split: TimeSplit | str = "test",
     output_directory: str | Path | None = None,
     random_seed: int = 42,
-    reward: RewardChoice = "marl",
+    reward: RewardChoice = "electricity_discomfort",
     carbon_weight: float = 1.0,
     comfort_weight: float = 0.25,
     fairness_weight: float = 0.25,
@@ -647,9 +682,9 @@ def evaluate_marlisa(
 def run_marlisa(
     schema: str | Path = DEFAULT_SCHEMA,
     output_directory: str | Path = DEFAULT_OUTPUT_DIRECTORY,
-    episodes: int = 3,
+    episodes: int = DEFAULT_TRAINING_EPISODES,
     random_seed: int = 42,
-    reward: RewardChoice = "marl",
+    reward: RewardChoice = "electricity_discomfort",
     hidden_dimension: tuple[int, int] = (256, 256),
     discount: float = 0.99,
     tau: float = 0.005,
@@ -681,17 +716,23 @@ def run_marlisa(
     simulate_power_outage: bool | None = None,
     use_training_encoders: bool = False,
     pipeline_fixes: bool = False,
-    split: TimeSplit | str = "all",
+    split: TimeSplit | str = "train",
+    run_validation: bool | None = None,
     run_test: bool | None = None,
 ) -> dict[str, Any]:
     """Train MARLISA and evaluate its performance.
 
-    When ``split='all'`` (default), trains and evaluates on the complete month.
-    When ``split='train'``, trains on June 1–20 and deterministically evaluates
-    on the held-out test split (June 26–30).
+    Default ``split='train'`` trains on June 1–20, scores validation on
+    June 21–25, and evaluates the final deterministic policy on held-out
+    June 26–30. Outputs are written under ``output_directory/seed_<seed>/``.
 
-    ``pipeline_fixes`` enables observation of simulated temperatures,
-    training encoder reuse on held-out intervals, and disables power outages.
+    CityLearn's ``learn()`` API does not expose mid-training checkpoints, so
+    validation reports the final policy rather than selecting among episode
+    checkpoints the way Independent SAC does. ``selected_checkpoint.pt`` is
+    therefore the deterministic final policy.
+
+    Set ``split='all'`` for the older full-month workflow. ``pipeline_fixes``
+    remains off by default.
     """
     if episodes < 3:
         raise ValueError(
@@ -705,7 +746,9 @@ def run_marlisa(
             simulate_power_outage = False
 
     schema = Path(schema).resolve()
-    output_directory = Path(output_directory).resolve()
+    base_output_directory = Path(output_directory).resolve()
+    seed_directory = base_output_directory / f"seed_{random_seed}"
+    output_directory = seed_directory
     if not schema.is_file():
         raise FileNotFoundError(f"CityLearn schema was not found: {schema}")
 
@@ -717,6 +760,8 @@ def run_marlisa(
     )
     is_train_split = active_split is not None and active_split.name == "train"
 
+    if run_validation is None:
+        run_validation = is_train_split
     if run_test is None:
         run_test = is_train_split
 
@@ -739,7 +784,8 @@ def run_marlisa(
         simulate_power_outage=simulate_power_outage,
     )
 
-    # Adapt exploration, standardization, and batch size for truncated smoke episodes:
+    # Adapt exploration, standardization, and batch size for truncated smoke
+    # episodes; otherwise use SAC-aligned defaults on the train split.
     episode_transitions = env.time_steps - 1
     if simulation_end_time_step is not None:
         actual_standardize = (
@@ -758,8 +804,20 @@ def run_marlisa(
             else batch_size
         )
     else:
-        actual_standardize = standardize_start_time_step
-        actual_end_exploration = end_exploration_time_step
+        if is_train_split:
+            actual_standardize = (
+                standardize_start_time_step
+                if standardize_start_time_step is not None
+                else DEFAULT_STANDARDIZE_START_TIME_STEP
+            )
+            actual_end_exploration = (
+                end_exploration_time_step
+                if end_exploration_time_step is not None
+                else DEFAULT_END_EXPLORATION_TIME_STEP
+            )
+        else:
+            actual_standardize = standardize_start_time_step
+            actual_end_exploration = end_exploration_time_step
         actual_batch_size = batch_size
 
     agent = ComparableMARLISA(
@@ -797,11 +855,19 @@ def run_marlisa(
     actions = pd.DataFrame(_final_action_records(agent, env))
     rewards = pd.DataFrame(_final_reward_records(env))
     observations = observations_dataframe(env)
-    kpis = env.evaluate()
+    if active_split is not None:
+        kpis = compute_split_kpis(
+            env,
+            scored_start_absolute=active_split.start_time_step,
+            comfort_band=comfort_band,
+        )
+    else:
+        kpis = env.evaluate()
     kpi_table = kpis.pivot(index="cost_function", columns="name", values="value")
     fairness = _fairness_summary(kpis)
 
     experiment_label = {
+        "electricity_discomfort": "MARLISA",
         "carbon": "Carbon-aware MARLISA",
         "fair_carbon": (
             "Worst-case fair MARLISA"
@@ -819,7 +885,7 @@ def run_marlisa(
         if active_split is not None
         else experiment_label
     )
-    comparison = _comparison_table(kpis, comp_label)
+    comparison = _comparison_table(kpis, comp_label, seed=random_seed)
 
     metadata = {
         "controller": "src.run_marlisa.ComparableMARLISA",
@@ -833,6 +899,13 @@ def run_marlisa(
         "reward_choice": reward,
         "reward_function": type(env.reward_function).__name__,
         "reward_formula": {
+            "electricity_discomfort": (
+                "-lambda_E * max(net_electricity_consumption, 0) / E_scale "
+                "- lambda_D * occupied_discomfort"
+            ),
+            "independent_sac": (
+                "citylearn.IndependentSACReward (electricity only)"
+            ),
             "marl": (
                 "-sign(net_electricity_consumption_i) * 0.01 * "
                 "net_electricity_consumption_i**2 * "
@@ -859,13 +932,29 @@ def run_marlisa(
                 "comfort_band_celsius": env.reward_function.comfort_band,
             }
             if isinstance(env.reward_function, FairCarbonAwareReward)
-            else None
+            else (
+                {
+                    "lambda_electricity": env.reward_function.lambda_electricity,
+                    "lambda_discomfort": env.reward_function.lambda_discomfort,
+                    "electricity_scale": env.reward_function.electricity_scale,
+                    "discomfort_scale": env.reward_function.discomfort_scale,
+                    "comfort_band_celsius": env.reward_function.band,
+                }
+                if isinstance(env.reward_function, ElectricityDiscomfortSACReward)
+                else None
+            )
         ),
         "central_agent": False,
         "random_seed": random_seed,
         "episodes": episodes,
         "final_episode_is_deterministic": True,
+        "model_selection": (
+            "final_deterministic_episode"
+            if is_train_split
+            else "full_month_final_episode"
+        ),
         "episode_time_steps": env.time_steps,
+        "lstm_lookback": LSTM_LOOKBACK,
         "observation_rows": len(observations),
         "observation_columns": list(observations.columns),
         "buildings": [building.name for building in env.buildings],
@@ -899,7 +988,9 @@ def run_marlisa(
             "use_training_encoders": bool(use_training_encoders),
             "pipeline_fixes": bool(pipeline_fixes),
         },
+        "has_held_out_validation_evaluation": bool(run_validation),
         "has_held_out_test_evaluation": bool(run_test),
+        "base_output_directory": str(base_output_directory),
     }
 
     if save_results:
@@ -924,7 +1015,35 @@ def run_marlisa(
         (output_directory / "metadata.json").write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"
         )
-        _save_checkpoint(agent, output_directory / "checkpoint.pt", metadata)
+        checkpoint_path = output_directory / "checkpoint.pt"
+        _save_checkpoint(agent, checkpoint_path, metadata)
+        # Alias used by Independent SAC loaders / report scripts.
+        selected_path = output_directory / "selected_checkpoint.pt"
+        if selected_path.resolve() != checkpoint_path.resolve():
+            shutil.copy2(checkpoint_path, selected_path)
+
+    validation_result = None
+    if run_validation:
+        validation_result = evaluate_marlisa(
+            agent,
+            schema=schema,
+            split=VALIDATION_SPLIT,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            reward=reward,
+            carbon_weight=carbon_weight,
+            comfort_weight=comfort_weight,
+            fairness_weight=fairness_weight,
+            worst_case_weight=worst_case_weight,
+            disparity_weight=disparity_weight,
+            fairness_mode=fairness_mode,
+            comfort_band=comfort_band,
+            save_results=save_results,
+            observe_simulated_temperature=observe_simulated_temperature,
+            use_training_encoders=use_training_encoders,
+            simulate_power_outage=simulate_power_outage,
+            experiment_label=experiment_label,
+        )
 
     test_result = None
     if run_test:
@@ -948,6 +1067,11 @@ def run_marlisa(
             simulate_power_outage=simulate_power_outage,
             experiment_label=experiment_label,
         )
+        if save_results and test_result is not None:
+            # Flat alias matching Independent SAC's seed_*/test_kpis.csv.
+            test_result["kpis"].to_csv(
+                output_directory / "test_kpis.csv", index=False
+            )
 
     return {
         "env": env,
@@ -962,6 +1086,8 @@ def run_marlisa(
         "comparison": comparison,
         "metadata": metadata,
         "output_directory": output_directory,
+        "base_output_directory": base_output_directory,
+        "validation_result": validation_result,
         "test_result": test_result,
     }
 
@@ -974,11 +1100,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-directory", type=Path, default=DEFAULT_OUTPUT_DIRECTORY
     )
-    parser.add_argument("--episodes", type=int, default=3)
+    parser.add_argument(
+        "--episodes", type=int, default=DEFAULT_TRAINING_EPISODES
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--reward",
         choices=(
+            "electricity_discomfort",
             "independent_sac",
             "carbon",
             "fair_carbon",
@@ -987,7 +1116,7 @@ def parse_args() -> argparse.Namespace:
             "marl",
             "schema",
         ),
-        default="marl",
+        default="electricity_discomfort",
     )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--updates-per-step", type=int, default=1)
@@ -1000,8 +1129,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--split",
         choices=("all", "train", "test", "validation"),
-        default="all",
-        help="Dataset split to train on (default 'all').",
+        default="train",
+        help="Dataset split to train on (default 'train' held-out protocol).",
+    )
+    parser.add_argument(
+        "--no-validation",
+        action="store_true",
+        help="Skip validation-split evaluation when training on the train split.",
     )
     parser.add_argument(
         "--no-test",
@@ -1059,7 +1193,8 @@ def main() -> None:
         update_per_time_step=args.updates_per_step,
         simulation_end_time_step=args.simulation_end_time_step,
         split=args.split,
-        run_test=not args.no_test if args.no_test else None,
+        run_validation=False if args.no_validation else None,
+        run_test=False if args.no_test else None,
         fairness_mode=args.fairness_mode,
         worst_case_weight=args.worst_case_weight,
         disparity_weight=args.disparity_weight,
@@ -1074,6 +1209,9 @@ def main() -> None:
     )
     print("\nMARLISA evaluation (lower is better for these KPIs):")
     print(result["kpi_table"].round(3).to_string())
+    if result.get("validation_result") is not None:
+        print("\nValidation KPIs:")
+        print(result["validation_result"]["kpi_table"].round(3).to_string())
     if result.get("test_result") is not None:
         print("\nHeld-out test KPIs:")
         print(result["test_result"]["kpi_table"].round(3).to_string())

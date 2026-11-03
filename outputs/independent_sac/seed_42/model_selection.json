@@ -1,0 +1,9 @@
+{
+  "selection_rule": "comfort_feasible_then_min_electricity",
+  "discomfort_threshold": 0.2,
+  "no_feasible_checkpoint": false,
+  "selected_episode": 25,
+  "selected_checkpoint_path": "D:\\NUS\\CS5446 Reinforcement Learning\\cs5446_project\\outputs\\independent_sac\\seed_42\\checkpoints\\episode_025.pt",
+  "district_electricity_consumption_kwh": 391.615649048239,
+  "district_discomfort_proportion": 0.18977591036414565
+}
