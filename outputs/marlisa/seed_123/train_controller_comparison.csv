@@ -1,0 +1,27 @@
+cost_function,BasicRBC,Carbon-aware MARLISA,Fair carbon-aware MARLISA,MARLISA (train)
+all_time_peak_average,1.0886034453401712,,,
+annual_normalized_unserved_energy_total,0.0174504656582774,,,
+carbon_emissions_kgco2,,83.93828347115777,179.92809898522682,670.7775700478815
+carbon_emissions_total,1.8895872024675968,,,
+cost_total,1.842775951617604,,,
+daily_one_minus_load_factor_average,0.7082632607835321,,,
+daily_peak_average,1.3288270189951732,,,
+daily_peak_kwh,,8.553472167253494,10.414665818214417,7.5948529809713365
+discomfort_cold_delta_average,5.434250713997435,,,
+discomfort_cold_delta_maximum,9.404407501220703,,,
+discomfort_cold_delta_minimum,0.0,,,
+discomfort_cold_proportion,0.9429956712987272,,,
+discomfort_hot_delta_average,0.013265292291902,,,
+discomfort_hot_delta_maximum,3.1742026011149087,,,
+discomfort_hot_delta_minimum,0.0,,,
+discomfort_hot_proportion,0.0036033229491173,,,
+discomfort_proportion,0.9465989942478444,0.9642339647723496,0.2784346959122632,0.07436144389632762
+electricity_consumption_kwh,,181.02536250650883,391.8137775994837,1453.3707060962915
+electricity_consumption_total,1.8998764651584463,,,
+electricity_cost,,5.611709672972211,12.63996305402543,46.222587242138616
+monthly_one_minus_load_factor_average,0.8342270023223473,,,
+one_minus_thermal_resilience_proportion,0.4555555555555555,,,
+power_outage_normalized_unserved_energy_total,0.766660111530925,,,
+ramping_average,0.924019858436586,,,
+ramping_kwh,,73.86161947250366,104.7113432623446,288.8420416712761
+zero_net_energy,1.941639817670314,,,

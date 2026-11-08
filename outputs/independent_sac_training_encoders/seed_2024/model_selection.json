@@ -1,0 +1,11 @@
+{
+  "selection_rule": "fallback_least_discomfort_then_min_electricity",
+  "selection_metric": "district_electricity_consumption_kwh",
+  "selection_metric_value": 379.6360625587404,
+  "discomfort_threshold": 0.2,
+  "no_feasible_checkpoint": true,
+  "selected_episode": 20,
+  "selected_checkpoint_path": "C:\\Users\\Admin\\Desktop\\Admin\\Masters\\Reinforcement Learning\\RLProject\\cs5446_project\\outputs\\independent_sac_training_encoders\\seed_2024\\checkpoints\\episode_020.pt",
+  "district_electricity_consumption_kwh": 379.6360625587404,
+  "district_discomfort_proportion": 0.2432927716541162
+}

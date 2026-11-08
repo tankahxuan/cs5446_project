@@ -1,0 +1,95 @@
+{
+  "controller": "citylearn.agents.sac.SAC",
+  "citylearn_version": "3.0.2",
+  "torch_version": "2.14.1+cpu",
+  "schema": "C:\\Users\\Admin\\Desktop\\Admin\\Masters\\Reinforcement Learning\\RLProject\\cs5446_project\\notebooks\\data\\schema.json",
+  "random_seed": 2026,
+  "reward_choice": "electricity_discomfort",
+  "reward_config": {
+    "lambda_electricity": 1.0,
+    "lambda_discomfort": 1.0,
+    "electricity_scale": 10.0,
+    "discomfort_scale": 4.0,
+    "band": 1.0,
+    "comfort_band": 1.0,
+    "lower_exponent": 2.0,
+    "higher_exponent": 3.0,
+    "carbon_weight": 1.0,
+    "comfort_weight": 0.25,
+    "fairness_weight": 0.25,
+    "worst_case_weight": null,
+    "disparity_weight": null,
+    "fairness_mode": null
+  },
+  "hyperparameters": {
+    "hidden_dimension": [
+      256,
+      256
+    ],
+    "discount": 0.99,
+    "tau": 0.005,
+    "alpha": 0.2,
+    "learning_rate": 0.0003,
+    "batch_size": 256,
+    "replay_buffer_capacity": 100000,
+    "action_scaling_coefficient": 0.5,
+    "reward_scaling": 5.0,
+    "update_per_time_step": 1,
+    "standardize_start_time_step": 479,
+    "end_exploration_time_step": 478
+  },
+  "pipeline_options": {
+    "observe_simulated_temperature": false,
+    "use_training_encoders": true,
+    "simulate_power_outage": true,
+    "isolate_validation_rng": false
+  },
+  "dataset_splits": {
+    "train": {
+      "name": "train",
+      "start_time_step": 0,
+      "end_time_step": 479,
+      "start_date": "June 1",
+      "end_date": "June 20",
+      "n_time_steps": 480,
+      "n_transitions": 479
+    },
+    "validation": {
+      "name": "validation",
+      "start_time_step": 480,
+      "end_time_step": 599,
+      "start_date": "June 21",
+      "end_date": "June 25",
+      "n_time_steps": 120,
+      "n_transitions": 119
+    },
+    "test": {
+      "name": "test",
+      "start_time_step": 600,
+      "end_time_step": 719,
+      "start_date": "June 26",
+      "end_date": "June 30",
+      "n_time_steps": 120,
+      "n_transitions": 119
+    }
+  },
+  "training_episodes": 50,
+  "validation_every": 5,
+  "model_selection": {
+    "selection_rule": "comfort_feasible_then_min_electricity",
+    "selection_metric": "district_electricity_consumption_kwh",
+    "selection_metric_value": 373.68832367658615,
+    "discomfort_threshold": 0.2,
+    "no_feasible_checkpoint": false,
+    "selected_episode": 40,
+    "selected_checkpoint_path": "C:\\Users\\Admin\\Desktop\\Admin\\Masters\\Reinforcement Learning\\RLProject\\cs5446_project\\outputs\\independent_sac_training_encoders\\seed_2026\\checkpoints\\episode_040.pt",
+    "district_electricity_consumption_kwh": 373.68832367658615,
+    "district_discomfort_proportion": 0.1968469205864164
+  },
+  "environment_steps": 23950,
+  "gradient_updates": 70416,
+  "lstm_lookback": 12,
+  "include_lstm_warmup": true,
+  "evaluation_note": "Validation and test metrics are held-out. Training-period rewards are learning curves only and must not be reported as held-out KPIs.",
+  "dataset_note": "The local dataset covers June only and does not support cross-season generalization claims."
+}
