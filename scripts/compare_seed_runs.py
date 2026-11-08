@@ -2,7 +2,8 @@
 
 For each pair (A, B) and metric: mean of A and B, seeds where A is better
 (paired by seed number), whether every A run beats every B run, and the exact
-Mann-Whitney U p-value (two-sided). Lower is better for every metric here.
+two-sided p-value of the Mann-Whitney U statistic from a full permutation test,
+which stays exact when values are tied. Lower is better for every metric here.
 
 Usage, from the repo root:
 
@@ -10,10 +11,10 @@ Usage, from the repo root:
 
 The optional second file adds a "3-seed vs 5-seed means" table.
 """
+import itertools
 import sys
 
 import pandas as pd
-from scipy.stats import mannwhitneyu
 
 METRICS = [("carbon_kgco2", "carbon kg", 1), ("average_discomfort", "avg %", 100),
            ("worst_discomfort", "worst %", 100), ("discomfort_gap", "gap pts", 100)]
@@ -30,6 +31,22 @@ PAIRS = [
     ("marlisa", "fair_worst_case", "MARLISA vs worst-only"),
 ]
 
+
+def permutation_p(x, y):
+    """Exact two-sided p-value of the Mann-Whitney U statistic over all splits (handles ties)."""
+    def u_stat(a, b):
+        return sum(1.0 if i < j else 0.5 if i == j else 0.0 for i in a for j in b)
+    pooled, n = list(x) + list(y), len(x)
+    centre = n * len(y) / 2
+    observed = abs(u_stat(x, y) - centre)
+    splits = list(itertools.combinations(range(len(pooled)), n))
+    hits = 0
+    for idx in splits:
+        a = [pooled[i] for i in idx]
+        b = [pooled[i] for i in range(len(pooled)) if i not in idx]
+        hits += abs(u_stat(a, b) - centre) >= observed - 1e-12
+    return hits / len(splits)
+
 runs = pd.read_csv(sys.argv[1])
 seeds = sorted(runs.loc[runs["config"] == "marlisa", "seed"])
 print(f"seeds: {seeds}\n")
@@ -43,7 +60,7 @@ for a, b, title in PAIRS:
         wins = sum(x[s] < y[s] for s in common)
         separated = x.max() < y.min()
         reverse = y.max() < x.min()
-        p = mannwhitneyu(x, y, alternative="two-sided", method="exact").pvalue
+        p = permutation_p(x.round(10).tolist(), y.round(10).tolist())
         flag = "A beats B in every run" if separated else ("B beats A in every run" if reverse else "")
         print(f"   {name:10s} A {x.mean():6.1f} (sd {x.std():4.1f})  B {y.mean():6.1f} (sd {y.std():4.1f})  "
               f"diff {x.mean() - y.mean():6.1f}  A better in {wins}/{len(common)} seeds  p={p:.3f}  {flag}")

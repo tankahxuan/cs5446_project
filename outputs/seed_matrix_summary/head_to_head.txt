@@ -3,7 +3,7 @@ seeds: [42, 123, 2024, 2025, 2026]
 == MARLISA vs SAC (team rule)
    carbon kg  A  179.4 (sd  1.2)  B  179.0 (sd  2.5)  diff    0.4  A better in 3/5 seeds  p=0.690  
    avg %      A   15.9 (sd  1.8)  B   21.3 (sd  6.0)  diff   -5.3  A better in 4/5 seeds  p=0.095  
-   worst %    A   22.4 (sd  3.3)  B   32.7 (sd  7.8)  diff  -10.3  A better in 4/5 seeds  p=0.032  
+   worst %    A   22.4 (sd  3.3)  B   32.7 (sd  7.8)  diff  -10.3  A better in 4/5 seeds  p=0.040  
    gap pts    A   13.0 (sd  4.1)  B   23.1 (sd  4.8)  diff  -10.1  A better in 5/5 seeds  p=0.016  
 
 == MARLISA vs SAC (final episode)
