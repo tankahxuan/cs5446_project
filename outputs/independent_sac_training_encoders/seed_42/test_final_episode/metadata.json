@@ -1,0 +1,26 @@
+{
+  "phase": "test",
+  "split": {
+    "name": "test",
+    "start_time_step": 600,
+    "end_time_step": 719,
+    "start_date": "June 26",
+    "end_date": "June 30",
+    "n_time_steps": 120,
+    "n_transitions": 119
+  },
+  "random_seed": 42,
+  "include_lstm_warmup": true,
+  "warmup_steps": 12,
+  "transitions": 131,
+  "scored_transitions": 119,
+  "deterministic": true,
+  "optimizer_updates_during_eval": 0,
+  "observe_simulated_temperature": false,
+  "use_training_encoders": true,
+  "simulate_power_outage": false,
+  "citylearn_version": "3.0.2",
+  "torch_version": "2.14.1+cpu",
+  "checkpoint_type": "inference_only",
+  "kpi_note": "Primary KPIs in kpis.csv are raw scored-interval totals/proportions. citylearn_kpis.csv retains CityLearn legacy evaluate() values, where electricity/carbon/cost are baseline-normalized ratios and discomfort_proportion is an occupied-time discomfort fraction."
+}
