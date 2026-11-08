@@ -2,24 +2,41 @@
 
 Course project using [CityLearn](https://www.citylearn.net/) to study how building-level control agents can reduce electricity-related carbon emissions while limiting thermal discomfort across buildings.
 
-**Status:** Proposal and environment exploration. The research design below is planned; experimental results are not yet available.
+**Status:** Experiments complete. Every controller has been trained and tested on held-out June data with five random seeds (see [Multi-seed experiments](#multi-seed-experiments)); the report is being finalised.
 
 To access Proposal/Report here: [Working Report](https://www.overleaf.com/1514918655gmnfrgdhgmtj#c644c2)
 
-## Research question
+## Research questions
 
-Can coordinated reinforcement learning reduce district carbon emissions without leaving one building with substantially worse thermal comfort than the others?
+1. Can coordinated multi-agent reinforcement learning reduce district carbon emissions while limiting disproportionate thermal discomfort in the worst-affected buildings?
+2. How do different fairness objectives affect the trade-off between carbon emissions and comfort?
 
 We measure building-level fairness through the worst building's discomfort rate and the difference in discomfort rates between buildings. This measure does not describe fairness across demographic groups.
 
-## Planned approach
+## Approach and final settings
 
-1. Run CityLearn's no-control and rule-based controllers as reference policies.
-2. Train building-level reinforcement learning agents using a shared objective for district carbon emissions and average comfort.
-3. Add a penalty for the worst building's discomfort while keeping the agents and training setup comparable.
-4. Evaluate all policies on held-out time periods and multiple random seeds.
+The study compares five controllers, each with one agent per building:
 
-Planned outcomes include district carbon emissions, peak electricity demand, average discomfort, worst-building discomfort, and the gap between buildings. The final dataset, building selection, time split, reward weights, and seeds will be recorded here before reporting results.
+- **BasicRBC:** fixed hourly rules, no learning (the reference).
+- **Independent SAC:** one Soft Actor-Critic agent per building with no information sharing; the reward is electricity use plus discomfort.
+- **MARLISA:** one SAC agent per building that also shares its predicted demand with the others; same reward as Independent SAC.
+- **Carbon-aware MARLISA:** MARLISA with a carbon-only reward.
+- **Fair carbon-aware MARLISA:** MARLISA with carbon, comfort and fairness penalties (worst-off building and gap between buildings).
+
+Three variants of the fair reward (no fairness term, worst-building term only, gap term only) isolate the effect of the fairness term.
+
+| Setting | Value |
+| --- | --- |
+| Simulator | CityLearn 3.0.2 |
+| Dataset | `citylearn_challenge_2023_phase_2_local_evaluation` (local copy in `notebooks/data/`): 3 buildings, hourly, 1–30 June |
+| Splits | Train 1–20 June (steps 0–479), validation 21–25 June (480–599), test 26–30 June (600–719). Validation and test runs start 12 hours early to warm up the temperature model; 119 test hours are scored |
+| Training | 50 episodes per run; MARLISA's last episode is a deterministic test pass |
+| Seeds | 42, 123, 2024, 2025, 2026 (`DEFAULT_SEEDS` in `src/dataset_splits.py`) |
+| Comfort measure | Share of occupied hours more than 1 °C from the setpoint |
+| Rewards | Standard: −E/10 − D/4 (`src/sac_reward.py`); carbon: −E·c; fair: −E·c − 0.25·L − (0.25·worst L + 0.25·gap in L) (`src/rewards.py`) |
+| Pipeline fixes | Off, except that the multi-seed Independent SAC runs reuse training-window input scaling, as MARLISA does |
+
+E is electricity imported from the grid (kWh), c the grid's carbon intensity, and D and L are discomfort terms (defined in the report). Outcomes are district carbon emissions, daily peak demand, average discomfort, worst-building discomfort and the discomfort gap between buildings.
 
 ## Getting started
 
@@ -47,7 +64,9 @@ pip install -r requirements.txt
 > uv pip install -r requirements-lock.txt --python .venv\Scripts\python.exe
 > ```
 
-### Linux / macOS / WSL
+### macOS / Linux / WSL
+
+On macOS, if `python3.11` is not found, install it with Homebrew (`brew install python@3.11`) or use uv (see the tip below).
 
 ```bash
 # 1. Create a Python 3.11 virtual environment
@@ -82,7 +101,7 @@ In VS Code, install the Python and Jupyter extensions, open a notebook, then sel
 
 > **Note on running scripts**: All command-line examples in this repository assume that `.venv` is activated in your current terminal session (indicated by a `(.venv)` prompt prefix). When opening a new terminal session, remember to activate it first (`.\.venv\Scripts\Activate.ps1` or `source .venv/bin/activate`).
 
-Start with [`notebooks/00_Getting_Started.ipynb`](notebooks/00_Getting_Started.ipynb). It uses CityLearn's `citylearn_challenge_2023_phase_2_local_evaluation` dataset for initial exploration. This pilot dataset is not yet the final experimental choice.
+Start with [`notebooks/00_Getting_Started.ipynb`](notebooks/00_Getting_Started.ipynb). It explores CityLearn's `citylearn_challenge_2023_phase_2_local_evaluation` dataset, which all experiments use (local copy in `notebooks/data/`).
 
 ## Repository contents
 
@@ -103,9 +122,17 @@ Start with [`notebooks/00_Getting_Started.ipynb`](notebooks/00_Getting_Started.i
 | `src/run_fair_carbon_aware_marlisa.py` | Fair carbon-aware MARLISA experiment runner |
 | `src/export_observations.py` | Reconstruct wide observation CSVs from controller actions |
 | `src/rewards.py` | Project-specific carbon reward functions |
-| `dashboard/app.py` (planned) | Local Plotly Dash results dashboard |
+| `src/sac_reward.py` | Electricity + discomfort reward used by Independent SAC and standard MARLISA |
+| `src/dataset_splits.py` | Fixed June train/validation/test splits and the default seed list |
+| `src/observation_scaling.py` | Reuses training-window observation scaling when an agent is evaluated on another split |
+| `src/experiment_data.py` | Shared data-capture utilities for the runners |
 | `tests/` | Unit tests (rewards, splits, pipeline fixes) and smoke tests (SAC, MARLISA) |
 | `scripts/diagnostics/` | 18 Oct simulator and SAC-input diagnostics (see its README) |
+| `scripts/run_06_plan.py`, `scripts/execute_06_viz.py` | Run notebook 06's seed-42 training plan, or refresh its charts, outside Jupyter |
+| `scripts/run_seed_matrix.py` | Launch the multi-seed experiment matrix in parallel and build the summary tables |
+| `scripts/compare_seed_runs.py` | Head-to-head comparisons between controllers: seeds won and exact p-values |
+| `scripts/make_report_figures.py` | Draw the report's two figures |
+| `outputs/` | Experiment results; `outputs/seed_matrix_summary/` holds the multi-seed tables |
 | `requirements.txt` | Python packages for the project |
 | `requirements-lock.txt` | Exact package versions for reproducible runs |
 | `.gitignore` | Excludes local environments and generated files |
@@ -122,7 +149,7 @@ Notebooks 00–06 stay as their authors left them, as a record of the work so fa
 | `03_MARLISA` – `05_Fair_Carbon_Aware_MARLISA` | MARLISA variants on the shared held-out protocol, 50 episodes | Standard MARLISA uses electricity+discomfort; carbon / fair variants change only the reward |
 | `06_agent_evaluation` | Plotly comparison on held-out outputs (`seed_*/test_kpis.csv`) | Set `RUN_ALL_MODELS=True` to regenerate |
 | `07_pipeline_checks` | Multi-controller checks, decoupled fairness verification, and held-out test split evaluation | Current |
-| `08_results` (planned) | Held-out, multi-seed results | Source of the report's numbers |
+| Multi-seed results (scripts, no notebook) | `scripts/run_seed_matrix.py` → `outputs/seed_matrix_summary/` | Source of the report's numbers (five seeds) |
 
 ## Rule-based controller
 
@@ -211,19 +238,19 @@ Open [`notebooks/05_Fair_Carbon_Aware_MARLISA.ipynb`](notebooks/05_Fair_Carbon_A
 # Default research protocol (held-out, 50 episodes, combined fairness):
 python src/run_fair_carbon_aware_marlisa.py
 
-# Proposal RQ1: Worst-case fairness (penalizes max_i L_i)
+# Worst-case fairness only (penalizes max_i L_i)
 python src/run_fair_carbon_aware_marlisa.py --fairness-mode worst_case
 
-# Proposal RQ2: Disparity-aware fairness (penalizes max_i L_i - min_i L_i)
+# Gap (disparity) fairness only (penalizes max_i L_i - min_i L_i)
 python src/run_fair_carbon_aware_marlisa.py --fairness-mode disparity
 ```
 
 The reward combines local carbon emissions, each building's occupied temperature loss outside a 1°C band, and shared fairness penalties. To support the project's research questions, the fairness objective can be configured via `--fairness-mode`:
 - `combined` (default): penalizes both worst building loss and inter-building disparity.
-- `worst_case` (Proposal RQ1): specifically penalizes the worst-off building's discomfort loss ($\max_i L_i$).
-- `disparity` (Proposal RQ2): specifically penalizes the spread in discomfort across buildings ($\max_i L_i - \min_i L_i$).
+- `worst_case`: penalizes only the worst-off building's discomfort loss ($\max_i L_i$).
+- `disparity`: penalizes only the spread in discomfort across buildings ($\max_i L_i - \min_i L_i$).
 
-Custom weights can also be specified directly via `--worst-case-weight` and `--disparity-weight`. Results are saved under `outputs/fair_carbon_aware_marlisa/seed_<seed>/`.
+Comparing these modes, plus a run with `--fairness-weight 0` (no fairness term), isolates the fairness term for research question 2. Custom weights can also be specified directly via `--worst-case-weight` and `--disparity-weight`. Results are saved under `outputs/fair_carbon_aware_marlisa/seed_<seed>/`.
 
 ## Dashboard observation data
 
@@ -235,17 +262,13 @@ python src/export_observations.py
 
 The replay utility processes the five canonical controller folders, reconstructs the observation trajectories, and checks that the replayed KPIs match each run's saved KPIs. Pass `--controllers` followed by specific output folder names to process only selected controllers.
 
-## Results dashboard (planned)
+## Results dashboard (not built)
 
-A standalone Plotly Dash application (`dashboard/app.py`) is planned to present
-the saved results as a five-stage data story: overall outcome, carbon-comfort trade-off,
-building fairness, time-series evidence, and one-day building replay. In the meantime,
-[`notebooks/06_agent_evaluation.ipynb`](notebooks/06_agent_evaluation.ipynb) provides
-interactive Plotly comparisons across all controllers.
+A standalone Plotly Dash application (`dashboard/app.py`) was planned but has not been built. [`notebooks/06_agent_evaluation.ipynb`](notebooks/06_agent_evaluation.ipynb) provides interactive Plotly comparisons of the seed-42 runs; the multi-seed results are summarised under [Multi-seed experiments](#multi-seed-experiments).
 
 ## Pipeline checks
 
-Open [`notebooks/07_pipeline_checks.ipynb`](notebooks/07_pipeline_checks.ipynb) for interactive verification of the held-out splits (June 1–20 train, June 21–25 validation, June 26–30 test), decoupled fairness objectives (Proposal RQ1 & RQ2), and candidate controller environments.
+Open [`notebooks/07_pipeline_checks.ipynb`](notebooks/07_pipeline_checks.ipynb) for interactive verification of the held-out splits (June 1–20 train, June 21–25 validation, June 26–30 test), decoupled fairness objectives (worst-case and disparity), and candidate controller environments.
 
 Or run the automated checks directly from the command line:
 
@@ -259,6 +282,63 @@ python -m pytest tests/test_marlisa_splits.py -k smoke
 
 Add experiment code, configurations, and documented results as the project develops. Formal KPI/metadata/checkpoint outputs under `outputs/<method>/seed_*/` are tracked for team comparison; smoke runs under `outputs/*_smoke/` stay ignored.
 
+## Multi-seed experiments
+
+These runs produce the report's numbers. `scripts/run_seed_matrix.py` trains and evaluates every configuration for each seed in parallel, one single-threaded process per run, with the same settings as the seed-42 runs in `scripts/run_06_plan.py`: 50 episodes, held-out test on 26–30 June, pipeline fixes off. A run is skipped if its results already exist, so committed results are never overwritten.
+
+| Configuration | Output folder |
+| --- | --- |
+| MARLISA, carbon-aware MARLISA, fair carbon-aware MARLISA | `outputs/marlisa/`, `outputs/carbon_aware_marlisa/`, `outputs/fair_carbon_aware_marlisa/` |
+| Independent SAC with training-window input scaling (also tested on its final episode, in `test_final_episode/`) | `outputs/independent_sac_training_encoders/` |
+| Fair reward with no fairness term, worst-building term only, gap term only | `outputs/fair_carbon_aware_marlisa_no_fairness/`, `outputs/fair_carbon_aware_marlisa_worst_case/`, `outputs/fair_carbon_aware_marlisa_disparity/` |
+
+Each run writes to `<folder>/seed_<seed>/`; logs and timings go to `outputs/seed_matrix_logs/`.
+
+### Windows (PowerShell)
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python scripts\run_seed_matrix.py --list                  # show which runs are still to do
+python scripts\run_seed_matrix.py --launch --workers 8    # run them in parallel
+python scripts\run_seed_matrix.py --summarize --seeds 42 123 2024 2025 2026
+python scripts\compare_seed_runs.py outputs\seed_matrix_summary\per_run.csv
+python scripts\make_report_figures.py --output-dir outputs\report_figures
+```
+
+### macOS (Terminal)
+
+```bash
+source .venv/bin/activate
+python scripts/run_seed_matrix.py --list                  # show which runs are still to do
+python scripts/run_seed_matrix.py --launch --workers 8    # run them in parallel
+python scripts/run_seed_matrix.py --summarize --seeds 42 123 2024 2025 2026
+python scripts/compare_seed_runs.py outputs/seed_matrix_summary/per_run.csv
+python scripts/make_report_figures.py --output-dir outputs/report_figures
+```
+
+- **Choosing runs:** `--seeds` picks the seeds (default: the first three of `DEFAULT_SEEDS`) and `--configs` picks configurations. `--smoke --output-root <folder>` makes short runs to check the setup.
+- **Workers:** set `--workers` to no more than the number of CPU cores. Each run needs about 0.5 GB of memory. On a 24-core Windows PC, 18 runs in parallel took about 26 minutes.
+- **Outputs:**
+  - `--summarize` writes `outputs/seed_matrix_summary/summary.csv` (mean, standard deviation, lowest and highest per configuration) and `per_run.csv` (every run).
+  - `compare_seed_runs.py` prints, for key pairs of controllers, how many seeds each wins and exact p-values. Its saved output is `head_to_head.txt`.
+
+**Headline results** (test period, mean over five seeds; discomfort is the share of occupied hours more than 1 °C from the setpoint):
+
+| Controller | Carbon (kg CO₂) | Avg discomfort | Worst building | Gap (pp) |
+| --- | --- | --- | --- | --- |
+| BasicRBC (one run) | 365.6 | 98.2% | 99.2% | 2.7 |
+| Independent SAC | 179.0 | 21.3% | 32.7% | 23.1 |
+| MARLISA | 179.4 | 15.9% | 22.4% | 13.0 |
+| Carbon-aware MARLISA | 83.8 | 96.5% | 99.2% | 5.5 |
+| Fair carbon-aware MARLISA | 179.6 | 34.0% | 46.4% | 20.1 |
+| Fair: no fairness term | 165.7 | 41.1% | 54.7% | 26.1 |
+| Fair: worst-building term only | 174.9 | 28.4% | 35.9% | 14.0 |
+| Fair: gap term only | 174.5 | 33.7% | 47.7% | 23.3 |
+
+- **MARLISA vs Independent SAC:** MARLISA is the most comfortable controller and narrows the discomfort gap between buildings in every seed. Rewards are per-building, so this does not prove that coordination itself is the cause.
+- **Fairness terms:** the worst-building term improves comfort over no fairness term in every seed, for about 6% more carbon. The gap term does not reliably help.
+- **Carbon only:** carbon-aware MARLISA almost switches cooling off.
+
 ## Collaboration
 
 - Work on a branch for each change and open a pull request for a teammate to review.
@@ -267,14 +347,13 @@ Add experiment code, configurations, and documented results as the project devel
 
 ## Team
 
-| Member | Role |
-| --- | --- |
-| [Name] | Environment and data |
-| [Name] | Reference policies |
-| [Name] | Learning agents |
-| [Name] | Reward design and fairness analysis |
-| [Name] | Evaluation and reporting |
-| [Name, if applicable] | Reproducibility and presentation |
+- Chen Zihan
+- Li Jiaqi
+- Ma Yongjie
+- Tan Kah Xuan
+- Wee Guan Hao Meldrick
+
+Roles and individual contributions are listed in the report's appendix.
 
 ## References
 

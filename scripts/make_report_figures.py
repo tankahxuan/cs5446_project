@@ -39,7 +39,9 @@ ACCENT = "#2a78d6"
 BUILDING_COLOURS = ["#2a78d6", "#eb6834", "#1baf7a"]
 
 plt.rcParams.update({
-    "font.family": "Segoe UI",
+    # First installed font wins: Segoe UI on Windows, Helvetica on macOS.
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Segoe UI", "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
     "font.size": 8,
     "axes.edgecolor": AXIS,
     "axes.labelcolor": INK_2,
